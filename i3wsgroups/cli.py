@@ -150,13 +150,6 @@ def _create_args_parser() -> cli_util.ArgumentParserNoExit:
         default=os.path.expandvars('${XDG_RUNTIME_DIR}/i3-workspace-groups-' +
                                    os.environ['DISPLAY'].replace(':', '')),
         help='Path for the unix domain socket used by the server')
-    # Deprecated commands, will be removed in a future release.
-    subparsers.add_parser('workspace-back-and-forth',
-                          help='[DEPRECATED] Focus on the last focused workspace, similar to '
-                          'i3\'s "workspace back_and_forth" command.')
-    subparsers.add_parser('move-to-back-and-forth',
-                          help='[DEPRECATED] Move the focused container to the last focused '
-                          'workspace, similar to i3\'s "move container to back_and_forth" command')
     return parser
 
 
@@ -381,15 +374,6 @@ def run_command(i3_connection, args):
         controller.update_focused_workspace(metadata_updates)
     elif args.command == 'server':
         serve(i3_connection, args.server_addr)
-    # Deprecated commands, will be removed in a future release.
-    elif args.command == 'workspace-back-and-forth':
-        logger.warning('workspace-back-and-forth is deprecated, please '
-                       'migrate to the native i3 "workspace back_and_forth" command')
-        controller.i3_proxy.send_i3_command('workspace back_and_forth')
-    elif args.command == 'move-to-back-and-forth':
-        logger.warning('move-to-back-and-forth is deprecated, please '
-                       'migrate to the native i3 "workspace back_and_forth" command')
-        controller.i3_proxy.send_i3_command('move workspace back_and_forth')
     return ''
 
 

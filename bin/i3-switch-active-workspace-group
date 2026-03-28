@@ -32,7 +32,7 @@ main() {
     exit 1
   fi
   local tool
-  tool="$(get_tool "${I3_WORKSPACE_GROUPS_CLI:-i3-workspace-groups}")"
+  tool="$(get_tool "${I3_WORKSPACE_GROUPS_CLI:-i3sets-client}")"
   "${tool}" "$@" switch-active-group "${group}"
 }
 
