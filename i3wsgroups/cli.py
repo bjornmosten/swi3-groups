@@ -16,6 +16,12 @@ from i3wsgroups import i3_proxy
 from i3wsgroups import log_util
 from i3wsgroups import workspace_names
 
+def _display_id() -> str:
+    if 'SWAYSOCK' in os.environ:
+        return os.environ.get('WAYLAND_DISPLAY', 'wayland-0').replace(':', '')
+    return os.environ.get('DISPLAY', ':0').replace(':', '')
+
+
 _LIST_WORKSPACES_FIELDS = workspace_names.WORKSPACE_NAME_SECTIONS + [
     'window_icons', 'global_name', 'monitor', 'focused'
 ]
@@ -148,7 +154,7 @@ def _create_args_parser() -> cli_util.ArgumentParserNoExit:
     server_subparser.add_argument(
         '--server-addr',
         default=os.path.expandvars('${XDG_RUNTIME_DIR}/i3-workspace-groups-' +
-                                   os.environ['DISPLAY'].replace(':', '')),
+                                   _display_id()),
         help='Path for the unix domain socket used by the server')
     return parser
 

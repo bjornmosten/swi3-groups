@@ -3,6 +3,9 @@
 # See https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -o errexit -o errtrace -o nounset -o pipefail
 
+# shellcheck source=_ws-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_ws-groups-common.sh"
+
 readonly HELP_HEADING='Select a workspace to focus on'
 readonly HELP_CONTENT='You can focus on a new (non existing) workspace by using the format "group:number", for example "work:2"'
 readonly HELP_FORMAT='<span alpha="50%%" size="smaller"><b>%s</b>
@@ -11,21 +14,8 @@ readonly HELP_FORMAT='<span alpha="50%%" size="smaller"><b>%s</b>
 # shellcheck disable=SC2155
 readonly HELP_TEXT="$(printf "${HELP_FORMAT}" "${HELP_HEADING}" "${HELP_CONTENT}")"
 
-ROFI_CMD=(rofi -dmenu -p 'Workspace' -theme-str 'window {width: 60ch;}'
+MENU_CMD=("${_MENU_CMD}" -dmenu -p 'Workspace' -theme-str 'window {width: 60ch;}'
   -mesg "${HELP_TEXT}")
-
-command_exists() {
-  type "$1" &> /dev/null
-}
-
-get_tool() {
-  filename="$1"
-  local dir tool
-  dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-  tool="${dir}/${filename}"
-  command_exists "${tool}" || tool="${filename}"
-  printf '%s\n' "${tool}"
-}
 
 main() {
   local tool
@@ -35,13 +25,13 @@ main() {
     --fields 'group,local_number,window_icons,static_name' |
     column -t -s $'\t' -o '    ')
   if ! selected="$(printf '%s\n' "${displayed_workspaces[@]}" |
-    "${ROFI_CMD[@]}")"; then
+    "${MENU_CMD[@]}")"; then
     exit 1
   fi
   for i in "${!displayed_workspaces[@]}"; do
     line="${displayed_workspaces[${i}]}"
     if [[ "${line}" == "${selected}" ]]; then
-      i3-msg 'workspace  "'"${workspaces[${i}]}"'"'
+      wm_msg workspace "\"${workspaces[${i}]}\""
       exit
     fi
   done

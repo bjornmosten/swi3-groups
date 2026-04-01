@@ -3,8 +3,11 @@
 # See https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -o errexit -o errtrace -o nounset -o pipefail
 
+# shellcheck source=_ws-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_ws-groups-common.sh"
+
 readonly HELP_HEADING_FORMAT='Enter a new name for workspace "%s"'
-readonly HELP_CONTENT_FORMAT='<i>By default only the name is changed, but you can also use colons to change the number or group, In addition, you can use an hyphen ("-") to reset a property. 
+readonly HELP_CONTENT_FORMAT='<i>By default only the name is changed, but you can also use colons to change the number or group, In addition, you can use an hyphen ("-") to reset a property.
 Example inputs and what properties they change:</i> %s'
 readonly HELP_EXAMPLES='
 +-----------+-----------------------------------+
@@ -21,21 +24,8 @@ readonly HELP_EXAMPLES='
 readonly HELP_FORMAT='<span alpha="50%%" size="smaller"><b>%s</b>
 %s</span>'
 
-ROFI_CMD=(rofi -dmenu -p 'Rename' -theme-str
+MENU_CMD=("${_MENU_CMD}" -dmenu -p 'Rename' -theme-str
   'window {width: 60ch;} listview {lines: 0;}')
-
-command_exists() {
-  type "$1" &> /dev/null
-}
-
-get_tool() {
-  filename="$1"
-  local dir tool
-  dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-  tool="${dir}/${filename}"
-  command_exists "${tool}" || tool="${filename}"
-  printf '%s\n' "${tool}"
-}
 
 error() {
   local error normal
@@ -97,7 +87,7 @@ main() {
     # shellcheck disable=SC2059
     mesg[2]="$(printf "${HELP_FORMAT}" "${help_heading}" "${help_content}")"
   fi
-  if ! new_name_pattern="$("${ROFI_CMD[@]}" "${mesg[@]}")"; then
+  if ! new_name_pattern="$("${MENU_CMD[@]}" "${mesg[@]}")"; then
     exit 1
   fi
   rename_workspace "${new_name_pattern}"

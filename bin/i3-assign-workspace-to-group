@@ -3,6 +3,9 @@
 # See https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -o errexit -o errtrace -o nounset -o pipefail
 
+# shellcheck source=_ws-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_ws-groups-common.sh"
+
 readonly HELP_HEADING='Select a group to assign to the focused workspace.'
 readonly HELP_CONTENT='You can assign it to a new group by typing a new name.
 Note that the default group is shown as &lt;default>.'
@@ -12,19 +15,6 @@ readonly HELP_FORMAT='<span alpha="50%%" size="smaller"><b>%s</b>
 # shellcheck disable=SC2155
 readonly HELP_TEXT="$(printf "${HELP_FORMAT}" "${HELP_HEADING}" \
   "${HELP_CONTENT}")"
-
-command_exists() {
-  type "$1" &> /dev/null
-}
-
-get_tool() {
-  filename="$1"
-  local dir tool
-  dir="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-  tool="${dir}/${filename}"
-  command_exists "${tool}" || tool="${filename}"
-  printf '%s\n' "${tool}"
-}
 
 main() {
   select_groups="$(get_tool i3-select-workspace-group)"

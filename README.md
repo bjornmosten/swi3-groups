@@ -24,7 +24,9 @@ groups. I find this tool useful for managing many workspaces in i3.
   - [Default group](#default-group)
 - [Limitations](#limitations)
   - [Sway compatibility](#sway-compatibility)
+  - [Environment variables](#environment-variables)
   - [Polybar](#polybar)
+  - [Waybar](#waybar)
 
 ## Background
 
@@ -260,9 +262,26 @@ all be in the default group.
 
 ### Sway compatibility
 
-This project depends on [i3ipc](https://github.com/acrisci/i3ipc-python) for its
-interaction with i3, so should also work the same on sway. That said, I don't
-test it on sway and i3 is my main window manager.
+This project works on both i3 and sway. The core library uses
+[i3ipc](https://github.com/acrisci/i3ipc-python) which supports both window
+managers, and the tools auto-detect which WM is running (via `$SWAYSOCK` /
+`$I3SOCK`). Your i3 config keybindings can be copied directly to a sway config
+with no changes — the same commands work on both.
+
+The `i3sets-client` binary handles WM detection for:
+
+- **Socket path**: Uses `$WAYLAND_DISPLAY` on sway, `$DISPLAY` on i3
+- **WM commands**: `i3sets-client wm-msg <args>` runs `swaymsg` or `i3-msg`
+  as appropriate
+- **WM detection**: `i3sets-client detect-wm` prints `sway` or `i3`
+
+### Environment variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `I3_WORKSPACE_GROUPS_SOCKET` | Override the Unix socket path | Auto-detected |
+| `I3_WORKSPACE_GROUPS_CLI` | Override the client binary name | `i3sets-client` |
+| `WS_GROUPS_MENU_CMD` | Override the menu/launcher binary (e.g. `wofi`, `fuzzel`, `bemenu`) | `rofi` |
 
 ### Polybar
 
@@ -307,3 +326,29 @@ Run the
 [i3-groups-polybar-module-updater](./bin/i3-groups-polybar-module-updater)
 script. This script is responsible for calling the hook to update polybar
 whenever a relevant i3 window event occurs.
+
+### Waybar
+
+For sway users (or i3 users running waybar), a waybar custom module is provided.
+
+#### 1. Add the custom module to your waybar config
+
+```json
+"custom/workspace-groups": {
+    "exec": "i3-groups-waybar-module",
+    "return-type": "json",
+    "interval": "once",
+    "signal": 8,
+    "on-click": "i3-switch-active-workspace-group"
+}
+```
+
+Then add `"custom/workspace-groups"` to your bar modules.
+
+#### 2. Run a background script to update waybar on workspace events
+
+Run `i3-groups-bar-module-updater --bar waybar` (or just
+`i3-groups-bar-module-updater` which auto-detects the bar). This sends
+`SIGRTMIN+8` to waybar whenever a workspace event occurs, triggering the custom
+module to refresh. You can change the signal number with `--waybar-signal N`
+(must match the `signal` field in your waybar config).

@@ -1,136 +1,147 @@
-#!/bin/bash
-# TODO: fix shellcheck errors
-# shellcheck disable=all
+#!/usr/bin/env bash
+
+# Polybar module that displays workspace groups.
+# Uses i3sets-client instead of wmctrl, so it works on both i3 and sway.
+
+# shellcheck source=_ws-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_ws-groups-common.sh"
+
+COLOR_EXTERNAL_MONITOR=""
+COLOR_CURRENT_WS=""
+SHORTHAND_ENABLED=0
+
 while getopts c:e:s flag; do
   case "${flag}" in
     e) COLOR_EXTERNAL_MONITOR=${OPTARG} ;;
     c) COLOR_CURRENT_WS=${OPTARG} ;;
     s) SHORTHAND_ENABLED=1 ;;
-    *) echo "Check options: valid ones\
--c \"#HEXCOLOR\", -e \"#HEXCOLOR\",\
--s Enable shorthand notation for workspaces" ;;
+    *) echo "Options: -c \"#HEXCOLOR\" (current ws), -e \"#HEXCOLOR\" (external monitor), -s (shorthand)" ;;
   esac
 done
 
-# $1: workspace number
-# $2: group name
-function ows() {
-  group=$2
-  if [ "$group" == "default" ]; then
-    group=""
-  fi
-  echo "i3-workspace-groups workspace-number $1 --group-name" \"${group}\"
+tool="$(get_tool "${I3_WORKSPACE_GROUPS_CLI:-i3sets-client}")"
+
+# Build click-action for switching to a workspace number in a group.
+ows() {
+  local ws_num="$1" group="$2"
+  [[ "${group}" == "default" ]] && group=""
+  echo "i3-workspace-groups workspace-number ${ws_num} --group-name \"${group}\""
 }
 
-function ch_gr() {
-  group=$1
-  if [ "$1" == "default" ]; then
-    group=""
-  fi
-  echo "i3-workspace-groups switch-active-group \"$group\""
+# Build click-action for switching active group.
+ch_gr() {
+  local group="$1"
+  [[ "${group}" == "default" ]] && group=""
+  echo "i3-workspace-groups switch-active-group \"${group}\""
 }
 
-# $1: what to show in polybar
-# $2: group name
-# $3: ws number
-# $4: ws long number given by i3-workspace-groups
-function txt_item() {
-  ws_screen=$(($4 / 100000))
-  ws_click=$3
-  if [[ $ws_screen == 0 ]]; then
-    echo "%{A1:"$(ows $ws_click $2) ":}$1%{A}"
+# Format a workspace item with polybar click action and optional external monitor color.
+# $1: display text, $2: group, $3: ws number, $4: global number
+txt_item() {
+  local display="$1" group="$2" ws_num="$3" global_num="$4"
+  local ws_screen=$((global_num / 100000))
+  if [[ ${ws_screen} -eq 0 ]] || [[ -z "${COLOR_EXTERNAL_MONITOR}" ]]; then
+    echo "%{A1:$(ows "${ws_num}" "${group}"):}${display}%{A}"
   else
-    w=$(echo "$1" | sed -e "s/\([^0-9]*\)\([[:digit:]]\+\)\([^0-9]*\)/\1%{F$COLOR_EXTERNAL_MONITOR}\2%{F-}\3/")
-    echo "%{A1:"$(ows $ws_click $2) ":}$w%{A}"
+    local w
+    w=$(echo "${display}" | sed -e "s/\([^0-9]*\)\([[:digit:]]\+\)\([^0-9]*\)/\1%{F${COLOR_EXTERNAL_MONITOR}}\2%{F-}\3/")
+    echo "%{A1:$(ows "${ws_num}" "${group}"):}${w}%{A}"
   fi
 }
 
-fixed_wmctrl=$(
-  wmctrl -d |
-    sed -e "s/$(echo -ne '\u200b')//g"
-)
+# Get workspace data from the server.
+# Fields: global_number, group, local_number, focused
+mapfile -t ws_data < <("${tool}" list-workspaces \
+  --fields 'global_number,group,local_number,focused')
 
-current_ws_name=$(
-  echo "$fixed_wmctrl" |
-    grep '\*' |
-    awk '{print $9}' |
-    sed -e "s/\(^[[:digit:]]\+\):\([[:digit:]]\+$\)/\1:default:\2/"
-)
-current_ws=$(
-  echo "$current_ws_name" |
-    cut -f 3 -d ":"
-)
-current_group=$(
-  echo "$current_ws_name" |
-    cut -f 2 -d ":"
-)
-wmctrl="$(
-  echo "$fixed_wmctrl" |
-    awk '{print $9}' |
-    sed -e "s/\(^[[:digit:]]\+\):\([[:digit:]]\+$\)/\1:default:\2/"
-)"
+# Parse into arrays.
+declare -a ws_globals ws_groups ws_locals ws_focused
+for line in "${ws_data[@]}"; do
+  IFS=$'\t' read -r g grp l f <<< "${line}"
+  ws_globals+=("${g}")
+  ws_groups+=("${grp}")
+  ws_locals+=("${l}")
+  ws_focused+=("${f}")
+done
 
-groups=$(
-  echo "$wmctrl" |
-    cut -f 2 -d ":" |
-    nl |
-    sort -rk 2 |
-    uniq -f 1 |
-    sort -n |
-    cut -f 2
-)
+# Find current workspace.
+current_group=""
+current_local=""
+for i in "${!ws_focused[@]}"; do
+  if [[ "${ws_focused[${i}]}" == "True" ]]; then
+    current_group="${ws_groups[${i}]}"
+    current_local="${ws_locals[${i}]}"
+    break
+  fi
+done
 
-for group in $groups; do
-  text=$text"%{A1:$(ch_gr $group):}$group:%{A}"
-  i=1
+# Get unique groups in order.
+declare -a seen_groups
+declare -A seen_group_map
+for grp in "${ws_groups[@]}"; do
+  if [[ -z "${seen_group_map[${grp}]+x}" ]]; then
+    seen_groups+=("${grp}")
+    seen_group_map["${grp}"]=1
+  fi
+done
 
-  ws_in_current_group=$(echo "$wmctrl" | grep ":$group:")
-  ws_prev=$(echo "$ws_in_current_group" | head -1 | cut -f 3 -d ':')
-  ws_last=$(echo "$ws_in_current_group" | tail -1 | cut -f 3 -d ':')
+text=""
+for group in "${seen_groups[@]}"; do
+  display_group="${group:-default}"
+  text="${text}%{A1:$(ch_gr "${display_group}"):}${display_group}:%{A}"
 
-  for ws_full_name in $ws_in_current_group; do
-    ws_num=$(echo "$ws_full_name" | cut -f 3 -d ':')
-    ws_long=$(echo "$ws_full_name" | cut -f 1 -d ':')
-    # if this is the current window
-    if [ "$ws_num" == "$current_ws" ] && [ "$group" == "$current_group" ]; then
-      text=$text"%{u#a3be8c}%{+u} %{F$COLOR_CURRENT_WS}$(txt_item $ws_num $group $ws_num $ws_long)%{F-} %{-u}"
-    # if it is the curent group do not do shorthand
-    elif [ "$group" == "$current_group" ]; then
-      text=$text"$(txt_item " $ws_num " $group $ws_num $ws_long)"
-      # do shorthand notation
-    elif [[ $SHORTHAND_ENABLED != "1" ]]; then
-      text=$text"$(txt_item " $ws_num " $group $ws_num $ws_long)"
-    else
-      # if this is the first one
-      if [[ $ws_num == $ws_prev ]]; then
-        text=$text"$(txt_item " $ws_num" $group $ws_num $ws_long)"
-        # if its somewhere in the middle
-      elif (($ws_num > $(($ws_prev + 1)))); then
-        if [[ $i > 2 ]]; then
-          text=$text"$(txt_item "-$ws_prev" $group $ws_prev $ws_long_prev)"
-        elif [[ $i == 2 ]]; then
-          text=$text"$(txt_item ", $ws_prev" $group $ws_prev $ws_long_prev)"
-        fi
-        text=$text"$(txt_item ", $ws_num" $group $ws_num $ws_long)"
-        i=1
-      # if it is the last one
-      elif [[ $ws_num == $ws_last ]]; then
-        if [[ $i > 1 ]] && [[ $ws_prev < $(($ws_num - 1)) ]]; then
-          text=$text"$(txt_item "-$ws_prev" $group $ws_prev $ws_long_prev)"
-          text=$text"$(txt_item ", $ws_num" $group $ws_num $ws_long)"
-        elif [[ $i > 1 ]]; then
-          text=$text"$(txt_item "-$ws_num" $group $ws_num $ws_long)"
-        else
-          text=$text"$(txt_item ", $ws_num" $group $ws_num $ws_long)"
-        fi
-      else
-        i=$(($i + 1))
-      fi
-      ws_prev=$ws_num
-      ws_long_prev=$ws_long
+  # Collect workspaces in this group.
+  declare -a grp_locals grp_globals
+  grp_locals=()
+  grp_globals=()
+  for i in "${!ws_groups[@]}"; do
+    if [[ "${ws_groups[${i}]}" == "${group}" ]]; then
+      grp_locals+=("${ws_locals[${i}]}")
+      grp_globals+=("${ws_globals[${i}]}")
     fi
   done
-  text=$text" | "
+
+  local_count=${#grp_locals[@]}
+  prev_local="${grp_locals[0]}"
+  last_local="${grp_locals[$((local_count - 1))]}"
+  seq_count=1
+
+  for j in $(seq 0 $((local_count - 1))); do
+    ws_num="${grp_locals[${j}]}"
+    ws_long="${grp_globals[${j}]}"
+
+    if [[ "${ws_num}" == "${current_local}" ]] && [[ "${group}" == "${current_group}" ]]; then
+      text="${text}%{u#a3be8c}%{+u} %{F${COLOR_CURRENT_WS}}$(txt_item "${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")%{F-} %{-u}"
+    elif [[ "${group}" == "${current_group}" ]] || [[ "${SHORTHAND_ENABLED}" != "1" ]]; then
+      text="${text}$(txt_item " ${ws_num} " "${display_group}" "${ws_num}" "${ws_long}")"
+    else
+      # Shorthand notation for non-active groups.
+      if [[ "${j}" -eq 0 ]]; then
+        text="${text}$(txt_item " ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
+      elif ((ws_num > prev_local + 1)); then
+        if [[ ${seq_count} -gt 2 ]]; then
+          text="${text}$(txt_item "-${prev_local}" "${display_group}" "${prev_local}" "${prev_long}")"
+        elif [[ ${seq_count} -eq 2 ]]; then
+          text="${text}$(txt_item ", ${prev_local}" "${display_group}" "${prev_local}" "${prev_long}")"
+        fi
+        text="${text}$(txt_item ", ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
+        seq_count=1
+      elif [[ "${ws_num}" == "${last_local}" ]]; then
+        if [[ ${seq_count} -gt 1 ]]; then
+          text="${text}$(txt_item "-${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
+        else
+          text="${text}$(txt_item ", ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
+        fi
+      else
+        seq_count=$((seq_count + 1))
+      fi
+      prev_local="${ws_num}"
+      prev_long="${ws_long}"
+    fi
+  done
+  text="${text} | "
 done
-text=${text::-3}
-echo "$text"
+
+# Remove trailing " | ".
+text="${text% | }"
+echo "${text}"

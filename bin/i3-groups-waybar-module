@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# Waybar custom module that displays workspace groups.
+# Works on both i3 and sway via i3sets-client.
+#
+# Waybar config example:
+#   "custom/workspace-groups": {
+#       "exec": "i3-groups-waybar-module",
+#       "return-type": "json",
+#       "interval": "once",
+#       "signal": 8,
+#       "on-click": "i3-switch-active-workspace-group"
+#   }
+#
+# Pair with i3-groups-bar-module-updater to refresh on workspace events.
+
+set -o errexit -o errtrace -o nounset -o pipefail
+
+# shellcheck source=_ws-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_ws-groups-common.sh"
+
+tool="$(get_tool "${I3_WORKSPACE_GROUPS_CLI:-i3sets-client}")"
+
+# Get workspace data from the server.
+mapfile -t ws_data < <("${tool}" list-workspaces \
+  --fields 'group,local_number,focused,static_name,window_icons')
+
+current_group=""
+text=""
+tooltip=""
+
+for line in "${ws_data[@]}"; do
+  IFS=$'\t' read -r grp local_num focused static_name icons <<< "${line}"
+  display_group="${grp:-default}"
+
+  # Build tooltip with full details.
+  focus_marker=""
+  [[ "${focused}" == "True" ]] && focus_marker=" *"
+  ws_label="${display_group}:${local_num}"
+  [[ -n "${static_name}" ]] && ws_label="${ws_label} ${static_name}"
+  [[ -n "${icons}" ]] && ws_label="${ws_label} ${icons}"
+  tooltip="${tooltip}${ws_label}${focus_marker}\n"
+
+  if [[ "${focused}" == "True" ]]; then
+    current_group="${display_group}"
+  fi
+done
+
+# Build display text: "group:1 2 3 | other:1 2"
+declare -A group_texts
+declare -a group_order
+for line in "${ws_data[@]}"; do
+  IFS=$'\t' read -r grp local_num focused _ _ <<< "${line}"
+  display_group="${grp:-default}"
+
+  if [[ -z "${group_texts[${display_group}]+x}" ]]; then
+    group_order+=("${display_group}")
+    group_texts["${display_group}"]="${display_group}:"
+  fi
+
+  if [[ "${focused}" == "True" ]]; then
+    group_texts["${display_group}"]+=" [${local_num}]"
+  else
+    group_texts["${display_group}"]+=" ${local_num}"
+  fi
+done
+
+for i in "${!group_order[@]}"; do
+  grp="${group_order[${i}]}"
+  [[ ${i} -gt 0 ]] && text="${text} | "
+  text="${text}${group_texts[${grp}]}"
+done
+
+# Remove trailing newline from tooltip.
+tooltip="${tooltip%\\n}"
+
+# Output JSON for waybar.
+printf '{"text": "%s", "tooltip": "%s", "class": "%s"}\n' \
+  "${text}" "${tooltip}" "${current_group}"
