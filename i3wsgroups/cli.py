@@ -214,14 +214,17 @@ def serve(i3_connection, server_addr):
     # pylint: disable-next=import-outside-toplevel
     import socket
 
-    # Make sure the socket does not already exist
-    # TODO: lock the socket to avoid multiple servers trying to use the same
-    # one.
-    try:
+    # If another server is already running on this socket, exit gracefully.
+    if os.path.exists(server_addr):
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            probe.connect(server_addr)
+            probe.close()
+            logger.info('Another server is already running, exiting.')
+            return
+        except OSError:
+            probe.close()
         os.unlink(server_addr)
-    except OSError:
-        if os.path.exists(server_addr):
-            raise
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(server_addr)
     sock.listen(1)

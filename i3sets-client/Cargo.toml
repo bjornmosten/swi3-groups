@@ -1,6 +1,8 @@
 [package]
-name = "i3sets-client"
+name = "swi3-sets-client"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+swayipc = "3"
+clap = { version = "4", features = ["derive"] }

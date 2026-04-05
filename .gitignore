@@ -120,3 +120,4 @@ pytype_output/
 
 # Snyk
 .dccache
+.omc
