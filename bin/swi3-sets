@@ -451,13 +451,16 @@ cmd_waybar() {
 
     if [[ -z "${group_texts[${display_group}]+x}" ]]; then
       group_order+=("${display_group}")
-      group_texts["${display_group}"]="${display_group}:"
+      group_texts["${display_group}"]=""
     fi
 
-    if [[ "${focused}" == "True" ]]; then
-      group_texts["${display_group}"]+=" [${local_num}]"
-    else
-      group_texts["${display_group}"]+=" ${local_num}"
+    # Only show tabs for the active group
+    if [[ "${display_group}" == "${current_group}" ]]; then
+      if [[ "${focused}" == "True" ]]; then
+        group_texts["${display_group}"]+=" [${local_num}]"
+      else
+        group_texts["${display_group}"]+=" ${local_num}"
+      fi
     fi
   done
 
@@ -465,7 +468,11 @@ cmd_waybar() {
   for i in "${!group_order[@]}"; do
     grp="${group_order[${i}]}"
     [[ ${i} -gt 0 ]] && text="${text} | "
-    text="${text}${group_texts[${grp}]}"
+    if [[ "${grp}" == "${current_group}" ]]; then
+      text="${text}${grp}:${group_texts[${grp}]}"
+    else
+      text="${text}${grp}"
+    fi
   done
 
   tooltip="${tooltip%\\n}"
