@@ -21,28 +21,48 @@ wm_msg() {
   "${tool}" wm-msg "$@"
 }
 
-# Auto-detect menu backend: wofi on Wayland, rofi on X11.
+# Auto-detect menu backend.
+# Probe order: rofi → wofi → dmenu.
 # Override with SWI3SETS_MENU env var.
 if [[ -n "${SWI3SETS_MENU:-}" ]]; then
   _MENU_CMD="${SWI3SETS_MENU}"
-elif [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-  _MENU_CMD="wofi"
-else
+elif command_exists rofi; then
   _MENU_CMD="rofi"
+elif command_exists wofi; then
+  _MENU_CMD="wofi"
+elif command_exists dmenu; then
+  _MENU_CMD="dmenu"
+else
+  _MENU_CMD=""
 fi
 
 # Build a dmenu invocation into the global _MENU_ARGS array.
 # Usage: _build_menu_cmd PROMPT [MESG [THEME_STR]]
-# MESG and THEME_STR are silently ignored on wofi.
+# MESG and THEME_STR are only supported on rofi.
 _build_menu_cmd() {
   local prompt="${1:-}"
   local mesg="${2:-}"
   local theme="${3:-}"
-  if [[ "${_MENU_CMD}" == "wofi" ]]; then
-    _MENU_ARGS=("wofi" "--dmenu" "--prompt" "${prompt}")
-  else
-    _MENU_ARGS=("rofi" "-dmenu" "-p" "${prompt}")
-    [[ -n "${theme}" ]] && _MENU_ARGS+=(-theme-str "${theme}")
-    [[ -n "${mesg}" ]]  && _MENU_ARGS+=(-mesg "${mesg}")
-  fi
+  case "${_MENU_CMD}" in
+    rofi)
+      _MENU_ARGS=("rofi" "-dmenu" "-p" "${prompt}")
+      [[ -n "${theme}" ]] && _MENU_ARGS+=(-theme-str "${theme}")
+      [[ -n "${mesg}" ]]  && _MENU_ARGS+=(-mesg "${mesg}")
+      ;;
+    wofi)
+      _MENU_ARGS=("wofi" "--dmenu" "--prompt" "${prompt}")
+      ;;
+    dmenu)
+      _MENU_ARGS=("dmenu" "-p" "${prompt}")
+      ;;
+    "")
+      echo "swi3-sets: no menu launcher found (install rofi, wofi, or dmenu; or set SWI3SETS_MENU)" >&2
+      _MENU_ARGS=("false")
+      ;;
+    *)
+      # User-supplied custom command — pass it as-is.
+      # shellcheck disable=SC2086
+      read -ra _MENU_ARGS <<< "${_MENU_CMD}"
+      ;;
+  esac
 }

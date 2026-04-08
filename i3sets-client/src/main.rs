@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{self, Command};
 
-use swayipc::{Connection, Fallible};
+use swayipc::{Connection, EventType, Fallible};
 
 // ── workspace name format ────────────────────────────────────────────────────
 // global_number:\u{200b}group\u{200b}:static_name\u{200b}:dynamic_name\u{200b}:local_number
@@ -725,6 +725,95 @@ fn cmd_assign_workspace_to_group(conn: &mut Connection, group: &str) -> Fallible
     cmd_rename_workspace(conn, None, None, Some(group))
 }
 
+fn cmd_waybar(conn: &mut Connection) -> Fallible<String> {
+    let workspaces = get_all_workspaces(conn)?;
+
+    let current_group = workspaces
+        .iter()
+        .find(|ws| ws.focused)
+        .map(|ws| parse_name(&ws.name).group.unwrap_or_default())
+        .unwrap_or_default();
+
+    let groups = group_to_workspaces_ordered(&workspaces);
+
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut tooltip_lines: Vec<String> = Vec::new();
+
+    for (group, group_ws) in &groups {
+        let display = if group.is_empty() { "default" } else { group.as_str() };
+
+        if *group == current_group {
+            let tabs: String = group_ws
+                .iter()
+                .map(|ws| {
+                    let local_num = get_local_number(&parse_name(&ws.name)).unwrap_or(0);
+                    if ws.focused {
+                        format!(" [{}]", local_num)
+                    } else {
+                        format!(" {}", local_num)
+                    }
+                })
+                .collect();
+            text_parts.push(format!("{}:{}", display, tabs));
+        } else {
+            text_parts.push(display.to_string());
+        }
+
+        for ws in group_ws {
+            let meta = parse_name(&ws.name);
+            let local_num = get_local_number(&meta).unwrap_or(0);
+            let mut label = format!("{}:{}", display, local_num);
+            if let Some(ref name) = meta.static_name {
+                if !name.is_empty() {
+                    label.push_str(&format!(" {}", name));
+                }
+            }
+            if ws.focused {
+                label.push_str(" *");
+            }
+            tooltip_lines.push(label);
+        }
+    }
+
+    let text = text_parts.join(" | ").replace('"', "\\\"");
+    let tooltip = tooltip_lines.join("\\n").replace('"', "\\\"");
+    let class = if current_group.is_empty() {
+        "default".to_string()
+    } else {
+        current_group
+    };
+
+    Ok(format!(
+        r#"{{"text": "{}", "tooltip": "{}", "class": "{}"}}"#,
+        text, tooltip, class
+    ))
+}
+
+fn run_bar_updater(signal: u32) {
+    let subs = [
+        EventType::Workspace,
+    ];
+
+    let events = Connection::new()
+        .expect("could not connect to sway/i3")
+        .subscribe(subs)
+        .expect("could not subscribe to workspace events");
+
+    for event in events {
+        match event {
+            Ok(_) => {
+                Command::new("pkill")
+                    .args([&format!("-RTMIN+{}", signal), "waybar"])
+                    .status()
+                    .ok();
+            }
+            Err(e) => {
+                eprintln!("bar-updater: event error: {}", e);
+            }
+        }
+    }
+}
+
 // ── WM detection (no IPC needed) ─────────────────────────────────────────────
 
 fn detect_wm() -> &'static str {
@@ -919,6 +1008,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
                 .clone();
             cmd_assign_workspace_to_group(&mut conn, &group)
         }
+        "waybar" => cmd_waybar(&mut conn),
         _ => return Err(format!("error: unknown command: {}", cmd)),
     };
 
@@ -1003,6 +1093,16 @@ fn main() {
             }
             "detect-wm" => {
                 println!("{}", detect_wm());
+                return;
+            }
+            "bar-updater" => {
+                let signal = args
+                    .iter()
+                    .position(|a| a == "--waybar-signal")
+                    .and_then(|i| args.get(i + 1))
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(8);
+                run_bar_updater(signal);
                 return;
             }
             "wm-msg" => {

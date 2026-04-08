@@ -414,73 +414,6 @@ cmd_polybar() {
 }
 
 # ---------------------------------------------------------------------------
-# waybar — waybar module JSON output
-# ---------------------------------------------------------------------------
-
-cmd_waybar() {
-  local tool
-  tool="$(_tool)"
-
-  mapfile -t ws_data < <("${tool}" list-workspaces \
-    --fields 'group,local_number,focused,static_name,window_icons')
-
-  local current_group="" text="" tooltip="" line
-  for line in "${ws_data[@]}"; do
-    local grp local_num focused static_name icons
-    IFS=$'\t' read -r grp local_num focused static_name icons <<< "${line}"
-    local display_group="${grp:-default}"
-
-    local focus_marker=""
-    [[ "${focused}" == "True" ]] && focus_marker=" *"
-    local ws_label="${display_group}:${local_num}"
-    [[ -n "${static_name}" ]] && ws_label="${ws_label} ${static_name}"
-    [[ -n "${icons}" ]] && ws_label="${ws_label} ${icons}"
-    tooltip="${tooltip}${ws_label}${focus_marker}\n"
-
-    if [[ "${focused}" == "True" ]]; then
-      current_group="${display_group}"
-    fi
-  done
-
-  declare -A group_texts
-  declare -a group_order
-  for line in "${ws_data[@]}"; do
-    local grp local_num focused
-    IFS=$'\t' read -r grp local_num focused _ _ <<< "${line}"
-    local display_group="${grp:-default}"
-
-    if [[ -z "${group_texts[${display_group}]+x}" ]]; then
-      group_order+=("${display_group}")
-      group_texts["${display_group}"]=""
-    fi
-
-    # Only show tabs for the active group
-    if [[ "${display_group}" == "${current_group}" ]]; then
-      if [[ "${focused}" == "True" ]]; then
-        group_texts["${display_group}"]+=" [${local_num}]"
-      else
-        group_texts["${display_group}"]+=" ${local_num}"
-      fi
-    fi
-  done
-
-  local i grp
-  for i in "${!group_order[@]}"; do
-    grp="${group_order[${i}]}"
-    [[ ${i} -gt 0 ]] && text="${text} | "
-    if [[ "${grp}" == "${current_group}" ]]; then
-      text="${text}${grp}:${group_texts[${grp}]}"
-    else
-      text="${text}${grp}"
-    fi
-  done
-
-  tooltip="${tooltip%\\n}"
-  printf '{"text": "%s", "tooltip": "%s", "class": "%s"}\n' \
-    "${text}" "${tooltip}" "${current_group}"
-}
-
-# ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
 
@@ -517,7 +450,6 @@ main() {
     move)          cmd_move "$@" ;;
     rename)        cmd_rename "$@" ;;
     polybar)       cmd_polybar "$@" ;;
-    waybar)        cmd_waybar "$@" ;;
     select-group)  cmd_select_group "$@" ;;
     *)
       local tool
