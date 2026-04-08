@@ -425,7 +425,8 @@ fn cmd_list_groups(conn: &mut Connection, focused_monitor_only: bool) -> Fallibl
         get_all_workspaces(conn)?
     };
     let groups = group_to_workspaces_ordered(&workspaces);
-    Ok(groups.into_iter().map(|(g, _)| g).collect::<Vec<_>>().join("\n"))
+    let names: Vec<String> = groups.into_iter().map(|(g, _)| g).collect();
+    Ok(names.join("\n") + "\n")
 }
 
 fn cmd_list_workspaces(
@@ -742,20 +743,7 @@ fn cmd_waybar(conn: &mut Connection) -> Fallible<String> {
     for (group, group_ws) in &groups {
         let display = if group.is_empty() { "default" } else { group.as_str() };
 
-        if *group == current_group {
-            let tabs: String = group_ws
-                .iter()
-                .map(|ws| {
-                    let local_num = get_local_number(&parse_name(&ws.name)).unwrap_or(0);
-                    if ws.focused {
-                        format!(" [{}]", local_num)
-                    } else {
-                        format!(" {}", local_num)
-                    }
-                })
-                .collect();
-            text_parts.push(format!("{}:{}", display, tabs));
-        } else {
+        if *group != current_group {
             text_parts.push(display.to_string());
         }
 

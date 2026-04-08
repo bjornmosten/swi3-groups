@@ -30,6 +30,8 @@ elif command_exists rofi; then
   _MENU_CMD="rofi"
 elif command_exists wofi; then
   _MENU_CMD="wofi"
+elif command_exists fuzzel; then
+  _MENU_CMD="fuzzel"
 elif command_exists dmenu; then
   _MENU_CMD="dmenu"
 else
@@ -45,9 +47,24 @@ _build_menu_cmd() {
   local theme="${3:-}"
   case "${_MENU_CMD}" in
     rofi)
+      local focused_output=""
+      if command_exists swaymsg && command_exists jq; then
+        focused_output="$(swaymsg -t get_outputs 2> /dev/null |
+          jq -r '.[] | select(.focused) | .name' 2> /dev/null || true)"
+      elif command_exists i3-msg && command_exists jq; then
+        focused_output="$(i3-msg -t get_workspaces 2> /dev/null |
+          jq -r '.[] | select(.focused) | .output' 2> /dev/null || true)"
+      fi
       _MENU_ARGS=("rofi" "-dmenu" "-p" "${prompt}")
-      [[ -n "${theme}" ]] && _MENU_ARGS+=(-theme-str "${theme}")
-      [[ -n "${mesg}" ]]  && _MENU_ARGS+=(-mesg "${mesg}")
+      if [[ -n "${focused_output}" ]]; then
+        _MENU_ARGS+=(-monitor "${focused_output}")
+      fi
+      if [[ -n "${theme}" ]]; then
+        _MENU_ARGS+=(-theme-str "${theme}")
+      fi
+      if [[ -n "${mesg}" ]]; then
+        _MENU_ARGS+=(-mesg "${mesg}")
+      fi
       ;;
     wofi)
       _MENU_ARGS=("wofi" "--dmenu" "--prompt" "${prompt}")

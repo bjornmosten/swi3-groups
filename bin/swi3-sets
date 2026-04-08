@@ -23,12 +23,12 @@ readonly _DEFAULT_GROUP_ITEM='<default>'
 
 _list_groups() {
   local tool="$1"
-  local groups
-  groups="$("${tool}" list-groups)"
-  if ! echo "${groups}" | grep -qE '^$'; then
-    echo ''
+  local named_groups
+  named_groups="$("${tool}" list-groups | grep -v '^$' || true)"
+  echo ''
+  if [[ -n "${named_groups}" ]]; then
+    printf '%s\n' "${named_groups}"
   fi
-  printf '%s' "${groups}"
 }
 
 cmd_select_group() {
