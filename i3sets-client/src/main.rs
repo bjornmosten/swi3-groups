@@ -806,7 +806,18 @@ fn cmd_waybar(conn: &mut Connection) -> Fallible<String> {
     for (set, set_ws) in &groups {
         let display = if set.is_empty() { "default" } else { set.as_str() };
 
-        if *set != current_set {
+        if *set == current_set {
+            let ws_labels: Vec<String> = set_ws.iter().map(|ws| {
+                let meta = parse_name(&ws.name);
+                let local_num = get_local_number(&meta).unwrap_or(0);
+                if ws.focused {
+                    format!("[{}]", local_num)
+                } else {
+                    format!("{}", local_num)
+                }
+            }).collect();
+            text_parts.push(ws_labels.join(" "));
+        } else {
             text_parts.push(display.to_string());
         }
 

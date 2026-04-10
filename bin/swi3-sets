@@ -102,6 +102,32 @@ Note that the default set is shown as &lt;default>.'
 }
 
 # ---------------------------------------------------------------------------
+# assign-switch — assign focused workspace to a set and switch to it
+# ---------------------------------------------------------------------------
+
+cmd_assign_switch() {
+  local select_sets
+  select_sets="$(get_tool swi3-sets)"
+  local help_heading='Select a set to assign the focused workspace to and switch to.'
+  local help_content='You can assign it to a new set by typing a new name.
+Note that the default set is shown as &lt;default>.'
+  local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
+<i>%s</i></span>'
+  # shellcheck disable=SC2059
+  local help_text
+  help_text="$(printf "${help_format}" "${help_heading}" "${help_content}")"
+
+  local set
+  if ! set="$("${select_sets}" select-set -mesg "${help_text}")"; then
+    exit 1
+  fi
+  local tool
+  tool="$(_tool)"
+  "${tool}" "$@" assign-workspace-to-set "${set}"
+  "${tool}" "$@" switch-active-set "${set}"
+}
+
+# ---------------------------------------------------------------------------
 # focus — focus on a workspace chosen from a menu
 # ---------------------------------------------------------------------------
 
@@ -444,9 +470,10 @@ main() {
   shift
 
   case "${cmd}" in
-    switch-set)    cmd_switch_set "$@" ;;
-    assign)        cmd_assign "$@" ;;
-    focus)         cmd_focus "$@" ;;
+    switch-set)     cmd_switch_set "$@" ;;
+    assign)         cmd_assign "$@" ;;
+    assign-switch)  cmd_assign_switch "$@" ;;
+    focus)          cmd_focus "$@" ;;
     move)          cmd_move "$@" ;;
     rename)        cmd_rename "$@" ;;
     polybar)       cmd_polybar "$@" ;;
