@@ -21,7 +21,11 @@ struct WsMeta {
 
 fn sanitize(s: &str) -> String {
     let s = s.replace(DELIM, "%");
-    if s.starts_with(':') { s[1..].to_string() } else { s }
+    if s.starts_with(':') {
+        s[1..].to_string()
+    } else {
+        s
+    }
 }
 
 fn strip_suffix_colon(s: &str) -> &str {
@@ -66,7 +70,13 @@ fn parse_name(name: &str) -> WsMeta {
     } else {
         strip_prefix_colon(parts[4]).parse::<i64>().ok()
     };
-    WsMeta { global_number, set, static_name, dynamic_name, local_number }
+    WsMeta {
+        global_number,
+        set,
+        static_name,
+        dynamic_name,
+        local_number,
+    }
 }
 
 fn create_name(m: &WsMeta) -> String {
@@ -76,7 +86,11 @@ fn create_name(m: &WsMeta) -> String {
 
     let static_part = match m.static_name.as_deref() {
         Some(s) if !s.is_empty() => {
-            let v = if need_prefix { format!(":{}", s) } else { s.to_string() };
+            let v = if need_prefix {
+                format!(":{}", s)
+            } else {
+                s.to_string()
+            };
             need_prefix = true;
             v
         }
@@ -84,7 +98,11 @@ fn create_name(m: &WsMeta) -> String {
     };
     let dynamic_part = match m.dynamic_name.as_deref() {
         Some(s) if !s.is_empty() => {
-            let v = if need_prefix { format!(":{}", s) } else { s.to_string() };
+            let v = if need_prefix {
+                format!(":{}", s)
+            } else {
+                s.to_string()
+            };
             need_prefix = true;
             v
         }
@@ -92,14 +110,22 @@ fn create_name(m: &WsMeta) -> String {
     };
     let local_part = match m.local_number {
         Some(n) => {
-            if need_prefix { format!(":{}", n) } else { n.to_string() }
+            if need_prefix {
+                format!(":{}", n)
+            } else {
+                n.to_string()
+            }
         }
         None => String::new(),
     };
 
     format!(
         "{}:{d}{}{d}{}{d}{}{d}{}",
-        gn, set, static_part, dynamic_part, local_part,
+        gn,
+        set,
+        static_part,
+        dynamic_part,
+        local_part,
         d = DELIM
     )
 }
@@ -126,15 +152,21 @@ fn get_local_number(meta: &WsMeta) -> Option<i64> {
 // ── IPC helpers ──────────────────────────────────────────────────────────────
 
 fn get_sorted_outputs(conn: &mut Connection) -> Fallible<Vec<swayipc::Output>> {
-    let mut outputs: Vec<swayipc::Output> =
-        conn.get_outputs()?.into_iter().filter(|o| o.active).collect();
+    let mut outputs: Vec<swayipc::Output> = conn
+        .get_outputs()?
+        .into_iter()
+        .filter(|o| o.active)
+        .collect();
     outputs.sort_by_key(|o| (o.rect.y, o.rect.x));
     Ok(outputs)
 }
 
 fn get_monitor_index(conn: &mut Connection, monitor_name: &str) -> Fallible<i64> {
     let outputs = get_sorted_outputs(conn)?;
-    Ok(outputs.iter().position(|o| o.name == monitor_name).unwrap_or(0) as i64)
+    Ok(outputs
+        .iter()
+        .position(|o| o.name == monitor_name)
+        .unwrap_or(0) as i64)
 }
 
 fn get_focused_monitor_name(conn: &mut Connection) -> Fallible<String> {
@@ -238,10 +270,7 @@ fn rename_workspace(conn: &mut Connection, old: &str, new: &str) -> Fallible<()>
 
 // ── set index ───────────────────────────────────────────────────────────────
 
-fn get_set_index(
-    target_set: &str,
-    groups: &[(String, Vec<swayipc::Workspace>)],
-) -> i64 {
+fn get_set_index(target_group: &str, groups: &[(String, Vec<swayipc::Workspace>)]) -> i64 {
     let mut set_to_index: BTreeMap<String, i64> = BTreeMap::new();
     for (set, workspaces) in groups {
         for ws in workspaces {
@@ -253,10 +282,15 @@ fn get_set_index(
             }
         }
     }
-    if let Some(&idx) = set_to_index.get(target_set) {
+    if let Some(&idx) = set_to_index.get(target_group) {
         return idx;
     }
-    set_to_index.values().copied().max().map(|m| m + 1).unwrap_or(0)
+    set_to_index
+        .values()
+        .copied()
+        .max()
+        .map(|m| m + 1)
+        .unwrap_or(0)
 }
 
 // ── used/free local numbers ───────────────────────────────────────────────────
@@ -280,12 +314,12 @@ fn get_lowest_free_local_numbers(n: usize, used: &HashSet<i64>) -> Vec<i64> {
     result
 }
 
-fn find_free_local_number(conn: &mut Connection, target_set: &str) -> Fallible<i64> {
+fn find_free_local_number(conn: &mut Connection, target_group: &str) -> Fallible<i64> {
     let all = get_all_workspaces(conn)?;
     let groups = set_to_workspaces_ordered(&all);
     let set_workspaces: Vec<swayipc::Workspace> = groups
         .into_iter()
-        .filter(|(s, _)| s == target_set)
+        .filter(|(s, _)| s == target_group)
         .flat_map(|(_, ws)| ws)
         .collect();
     let used = get_used_local_numbers(&set_workspaces);
@@ -336,11 +370,8 @@ fn organize_workspace_sets(
             let mut new_meta = meta;
             new_meta.set = Some(set.clone());
             new_meta.local_number = Some(ln);
-            new_meta.global_number = Some(compute_global_number(
-                monitor_index,
-                set_index as i64,
-                ln,
-            ));
+            new_meta.global_number =
+                Some(compute_global_number(monitor_index, set_index as i64, ln));
             new_meta.dynamic_name = Some(String::new());
             let new_name = create_name(&new_meta);
             rename_workspace(conn, &ws.name, &new_name)?;
@@ -369,7 +400,11 @@ fn resolve_set(conn: &mut Connection, ctx: &SetContext) -> Fallible<String> {
             let monitor = get_focused_monitor_name(conn)?;
             let ws = get_monitor_workspaces(conn, &monitor)?;
             let groups = set_to_workspaces_ordered(&ws);
-            Ok(groups.into_iter().next().map(|(s, _)| s).unwrap_or_default())
+            Ok(groups
+                .into_iter()
+                .next()
+                .map(|(s, _)| s)
+                .unwrap_or_default())
         }
     }
 }
@@ -404,9 +439,7 @@ fn get_workspace_by_local_number(
     let all = get_all_workspaces(conn)?;
     for ws in &all {
         let meta = parse_name(&ws.name);
-        if meta.set.as_deref() == Some(set)
-            && get_local_number(&meta) == Some(local_number)
-        {
+        if meta.set.as_deref() == Some(set) && get_local_number(&meta) == Some(local_number) {
             return Ok((ws.name.clone(), true));
         }
     }
@@ -415,7 +448,7 @@ fn get_workspace_by_local_number(
 
 // ── command handlers ──────────────────────────────────────────────────────────
 
-fn cmd_list_sets(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<String> {
+fn cmd_list_groups(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<String> {
     let workspaces = if focused_monitor_only {
         let monitor = get_focused_monitor_name(conn)?;
         get_monitor_workspaces(conn, &monitor)?
@@ -444,11 +477,11 @@ fn cmd_list_workspaces(
     let target_workspaces: Vec<swayipc::Workspace> = match set_ctx {
         SetContext::None => workspaces,
         _ => {
-            let target_set = resolve_set(conn, set_ctx)?;
+            let target_group = resolve_set(conn, set_ctx)?;
             let groups = set_to_workspaces_ordered(&workspaces);
             groups
                 .into_iter()
-                .filter(|(s, _)| *s == target_set)
+                .filter(|(s, _)| *s == target_group)
                 .flat_map(|(_, ws)| ws)
                 .collect()
         }
@@ -484,7 +517,13 @@ fn cmd_list_workspaces(
                         .unwrap_or_default(),
                     "global_name" => ws.name.clone(),
                     "monitor" => ws.output.clone(),
-                    "focused" => if ws.focused { "1".to_string() } else { "0".to_string() },
+                    "focused" => {
+                        if ws.focused {
+                            "1".to_string()
+                        } else {
+                            "0".to_string()
+                        }
+                    }
                     "window_icons" => String::new(),
                     _ => String::new(),
                 })
@@ -525,8 +564,7 @@ fn cmd_workspace_relative(conn: &mut Connection, offset: i64) -> Fallible<String
         .iter()
         .position(|ws| ws.name == focused.name)
         .unwrap_or(0);
-    let next =
-        ((current as i64 + offset).rem_euclid(set_ws.len() as i64)) as usize;
+    let next = ((current as i64 + offset).rem_euclid(set_ws.len() as i64)) as usize;
     focus_workspace(conn, &set_ws[next].name, false)?;
     Ok(String::new())
 }
@@ -578,8 +616,7 @@ fn cmd_move_relative(conn: &mut Connection, offset: i64) -> Fallible<String> {
         .iter()
         .position(|ws| ws.name == focused.name)
         .unwrap_or(0);
-    let next =
-        ((current as i64 + offset).rem_euclid(set_ws.len() as i64)) as usize;
+    let next = ((current as i64 + offset).rem_euclid(set_ws.len() as i64)) as usize;
     send_i3_command(
         conn,
         &format!(
@@ -596,9 +633,9 @@ fn cmd_move_to_new(conn: &mut Connection, set_ctx: &SetContext) -> Fallible<Stri
     cmd_move_to_number(conn, ln, set_ctx, false)
 }
 
-fn cmd_switch_active_set(
+fn cmd_switch_active_group(
     conn: &mut Connection,
-    target_set: &str,
+    target_group: &str,
     focused_monitor_only: bool,
 ) -> Fallible<String> {
     let focused_monitor = get_focused_monitor_name(conn)?;
@@ -606,7 +643,7 @@ fn cmd_switch_active_set(
 
     for (monitor, workspaces) in &monitor_to_ws {
         let groups = set_to_workspaces_ordered(workspaces);
-        let set_exists = groups.iter().any(|(s, _)| s == target_set);
+        let set_exists = groups.iter().any(|(s, _)| s == target_group);
         if monitor != &focused_monitor && (focused_monitor_only || !set_exists) {
             continue;
         }
@@ -614,12 +651,12 @@ fn cmd_switch_active_set(
         let mut reordered: Vec<(String, Vec<swayipc::Workspace>)> = Vec::new();
         let target_ws: Vec<swayipc::Workspace> = groups
             .iter()
-            .filter(|(s, _)| s == target_set)
+            .filter(|(s, _)| s == target_group)
             .flat_map(|(_, ws)| ws.clone())
             .collect();
-        reordered.push((target_set.to_string(), target_ws));
+        reordered.push((target_group.to_string(), target_ws));
         for (s, ws) in &groups {
-            if s != target_set {
+            if s != target_group {
                 reordered.push((s.clone(), ws.clone()));
             }
         }
@@ -631,7 +668,8 @@ fn cmd_switch_active_set(
     // Switch focus if needed — re-fetch after renames
     let focused_ws = get_focused_workspace(conn)?;
     let focused_set = parse_name(&focused_ws.name).set.unwrap_or_default();
-    if focused_set == target_set {
+    if focused_set == target_group {
+        focus_workspace(conn, &focused_ws.name, false)?;
         return Ok(String::new());
     }
 
@@ -639,7 +677,7 @@ fn cmd_switch_active_set(
     let groups = set_to_workspaces_ordered(&monitor_ws);
     let workspace_name = groups
         .iter()
-        .find(|(s, _)| s == target_set)
+        .find(|(s, _)| s == target_group)
         .and_then(|(_, ws)| ws.first().map(|w| w.name.clone()));
 
     let name = if let Some(n) = workspace_name {
@@ -647,12 +685,12 @@ fn cmd_switch_active_set(
     } else {
         let monitor_index = get_monitor_index(conn, &focused_monitor)?;
         let groups2 = set_to_workspaces_ordered(&monitor_ws);
-        let set_index = get_set_index(target_set, &groups2);
-        let ln = find_free_local_number(conn, target_set)?;
+        let set_index = get_set_index(target_group, &groups2);
+        let ln = find_free_local_number(conn, target_group)?;
         let gn = compute_global_number(monitor_index, set_index, ln);
         create_name(&WsMeta {
             global_number: Some(gn),
-            set: Some(target_set.to_string()),
+            set: Some(target_group.to_string()),
             local_number: Some(ln),
             ..Default::default()
         })
@@ -690,10 +728,7 @@ fn cmd_rename_workspace(
         .iter()
         .filter(|(grp, _)| grp == &s)
         .flat_map(|(_, ws)| ws)
-        .find(|ws| {
-            ws.name != focused.name
-                && get_local_number(&parse_name(&ws.name)) == Some(ln)
-        })
+        .find(|ws| ws.name != focused.name && get_local_number(&parse_name(&ws.name)) == Some(ln))
         .is_some();
 
     if conflict {
@@ -712,7 +747,11 @@ fn cmd_rename_workspace(
     let groups2 = set_to_workspaces_ordered(&monitor_ws);
     let set_index = get_set_index(&s, &groups2);
     let local_number = meta.local_number.unwrap_or(1);
-    meta.global_number = Some(compute_global_number(monitor_index, set_index, local_number));
+    meta.global_number = Some(compute_global_number(
+        monitor_index,
+        set_index,
+        local_number,
+    ));
     meta.dynamic_name = Some(String::new());
 
     let new_ws_name = create_name(&meta);
@@ -720,8 +759,8 @@ fn cmd_rename_workspace(
     Ok(String::new())
 }
 
-fn cmd_assign_workspace_to_set(conn: &mut Connection, set: &str) -> Fallible<String> {
-    cmd_rename_workspace(conn, None, None, Some(set))
+fn cmd_assign_workspace_to_group(conn: &mut Connection, group: &str) -> Fallible<String> {
+    cmd_rename_workspace(conn, None, None, Some(group))
 }
 
 /// Initialize a fresh i3/sway session: place one workspace per monitor in
@@ -804,20 +843,21 @@ fn cmd_waybar(conn: &mut Connection) -> Fallible<String> {
     let mut tooltip_lines: Vec<String> = Vec::new();
 
     for (set, set_ws) in &groups {
-        let display = if set.is_empty() { "default" } else { set.as_str() };
+        let display = if set.is_empty() {
+            "default"
+        } else {
+            set.as_str()
+        };
 
         if *set == current_set {
-            let ws_labels: Vec<String> = set_ws.iter().map(|ws| {
+            // Active group: one text entry per workspace
+            for ws in set_ws {
                 let meta = parse_name(&ws.name);
                 let local_num = get_local_number(&meta).unwrap_or(0);
-                if ws.focused {
-                    format!("[{}]", local_num)
-                } else {
-                    format!("{}", local_num)
-                }
-            }).collect();
-            text_parts.push(ws_labels.join(" "));
+                text_parts.push(format!("{}:{}", display, local_num));
+            }
         } else {
+            // Inactive group: just the group name
             text_parts.push(display.to_string());
         }
 
@@ -852,9 +892,7 @@ fn cmd_waybar(conn: &mut Connection) -> Fallible<String> {
 }
 
 fn run_bar_updater(signal: u32) {
-    let subs = [
-        EventType::Workspace,
-    ];
+    let subs = [EventType::Workspace];
 
     let events = Connection::new()
         .expect("could not connect to sway/i3")
@@ -899,7 +937,11 @@ fn detect_wm() -> &'static str {
 }
 
 fn wm_msg_cmd() -> &'static str {
-    if detect_wm() == "sway" { "swaymsg" } else { "i3-msg" }
+    if detect_wm() == "sway" {
+        "swaymsg"
+    } else {
+        "i3-msg"
+    }
 }
 
 // ── arg parsing helpers ───────────────────────────────────────────────────────
@@ -916,7 +958,7 @@ fn parse_set_context(args: &[String]) -> (SetContext, Vec<String>) {
             "--set-focused" => {
                 ctx = SetContext::Focused;
             }
-            "--set-name" => {
+            "--group-name" => {
                 i += 1;
                 if i < args.len() {
                     ctx = SetContext::Named(args[i].clone());
@@ -960,18 +1002,17 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
         _ => {}
     }
 
-    let mut conn = Connection::new()
-        .map_err(|e| format!("error: could not connect to i3/sway: {}", e))?;
+    let mut conn =
+        Connection::new().map_err(|e| format!("error: could not connect to i3/sway: {}", e))?;
 
     let result = match cmd {
-        "list-sets" => {
+        "list-groups" => {
             let monitor_only = has_flag(&rest, "--focused-monitor-only");
-            cmd_list_sets(&mut conn, monitor_only)
+            cmd_list_groups(&mut conn, monitor_only)
         }
         "list-workspaces" => {
             let default_fields = "global_number,set,static_name,dynamic_name,local_number,global_name,monitor,focused,window_icons";
-            let fields_str =
-                get_flag_value(&rest, "--fields").unwrap_or(default_fields);
+            let fields_str = get_flag_value(&rest, "--fields").unwrap_or(default_fields);
             let fields: Vec<&str> = fields_str.split(',').collect();
             let focused_only = has_flag(&rest, "--focused-only");
             let focused_monitor_only = has_flag(&rest, "--focused-monitor-only");
@@ -1016,38 +1057,30 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let (set_ctx, _) = parse_set_context(&rest);
             cmd_move_to_new(&mut conn, &set_ctx)
         }
-        "switch-active-set" => {
+        "switch-active-group" => {
             let focused_monitor_only = has_flag(&rest, "--focused-monitor-only");
-            let set = rest
+            let group = rest
                 .iter()
                 .find(|a| !a.starts_with('-'))
-                .ok_or_else(|| {
-                    "error: switch-active-set requires a set name".to_string()
-                })?
+                .ok_or_else(|| "error: switch-active-group requires a group name".to_string())?
                 .clone();
-            cmd_switch_active_set(&mut conn, &set, focused_monitor_only)
+            cmd_switch_active_group(&mut conn, &group, focused_monitor_only)
         }
         "rename-workspace" => {
             let name = get_flag_value(&rest, "--name").map(str::to_string);
-            let number = get_flag_value(&rest, "--number")
-                .and_then(|s| s.parse::<i64>().ok());
+            let number = get_flag_value(&rest, "--number").and_then(|s| s.parse::<i64>().ok());
             let set = get_flag_value(&rest, "--set").map(str::to_string);
-            cmd_rename_workspace(
-                &mut conn,
-                name.as_deref(),
-                number,
-                set.as_deref(),
-            )
+            cmd_rename_workspace(&mut conn, name.as_deref(), number, set.as_deref())
         }
-        "assign-workspace-to-set" => {
-            let set = rest
+        "assign-workspace-to-group" => {
+            let group = rest
                 .iter()
                 .find(|a| !a.starts_with('-'))
                 .ok_or_else(|| {
-                    "error: assign-workspace-to-set requires a set name".to_string()
+                    "error: assign-workspace-to-group requires a group name".to_string()
                 })?
                 .clone();
-            cmd_assign_workspace_to_set(&mut conn, &set)
+            cmd_assign_workspace_to_group(&mut conn, &group)
         }
         "waybar" => cmd_waybar(&mut conn),
         "init-session" => cmd_init_session(&mut conn),
