@@ -1,130 +1,130 @@
 #!/usr/bin/env bash
 
-# swi3-sets — unified workspace set manager for i3 and sway.
+# swi3-groups — unified workspace group manager for i3 and sway.
 # See https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -o errexit -o errtrace -o nounset -o pipefail
 
-# shellcheck source=_swi3-sets-common.sh
-source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_swi3-sets-common.sh"
+# shellcheck source=_swi3-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_swi3-groups-common.sh"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 _tool() {
-  get_tool "${SWI3SETS_CLI:-swi3-sets-client}"
+  get_tool "${SWI3GROUPS_CLI:-swi3-groups-client}"
 }
 
 # ---------------------------------------------------------------------------
-# select-set — internal helper (prompts user to pick a set via menu)
+# select-group — internal helper (prompts user to pick a group via menu)
 # ---------------------------------------------------------------------------
 
-readonly _DEFAULT_SET_ITEM='<default>'
+readonly _DEFAULT_GROUP_ITEM='<default>'
 
-_list_sets() {
+_list_groups() {
   local tool="$1"
-  local named_sets
-  named_sets="$("${tool}" list-sets | grep -v '^$' || true)"
+  local named_groups
+  named_groups="$("${tool}" list-groups | grep -v '^$' || true)"
   echo ''
-  if [[ -n "${named_sets}" ]]; then
-    printf '%s\n' "${named_sets}"
+  if [[ -n "${named_groups}" ]]; then
+    printf '%s\n' "${named_groups}"
   fi
 }
 
-cmd_select_set() {
+cmd_select_group() {
   local tool
   tool="$(_tool)"
-  _build_menu_cmd 'Workspace Set' '' 'window {width: 60ch;} listview {lines: 10;}'
+  _build_menu_cmd 'Workspace Group' '' 'window {width: 60ch;} listview {lines: 10;}'
   # Append caller-supplied args (e.g. -mesg) only for backends that support them.
   [[ "${_MENU_CMD}" != "wofi" ]] && _MENU_ARGS+=("$@")
-  local set
-  if ! set="$(
-    _list_sets "${tool}" |
-      sed -r 's|^$|'"${_DEFAULT_SET_ITEM}"'|' |
+  local group
+  if ! group="$(
+    _list_groups "${tool}" |
+      sed -r 's|^$|'"${_DEFAULT_GROUP_ITEM}"'|' |
       "${_MENU_ARGS[@]}"
   )"; then
     exit 1
   fi
-  if [[ "${set}" == "${_DEFAULT_SET_ITEM}" ]]; then
-    set=''
+  if [[ "${group}" == "${_DEFAULT_GROUP_ITEM}" ]]; then
+    group=''
   fi
-  printf '%s' "${set}"
+  printf '%s' "${group}"
 }
 
 # ---------------------------------------------------------------------------
-# switch-set — select and activate a workspace set
+# switch-group — select and activate a workspace group
 # ---------------------------------------------------------------------------
 
-cmd_switch_set() {
-  local select_sets
-  select_sets="$(get_tool swi3-sets)"
-  local help_heading='Select a workspace set to activate.'
-  local help_content='You can create a new set by typing a new name.
-Note that the default set is shown as &lt;default>.'
+cmd_switch_group() {
+  local select_groups
+  select_groups="$(get_tool swi3-groups)"
+  local help_heading='Select a workspace group to activate.'
+  local help_content='You can create a new group by typing a new name.
+Note that the default group is shown as &lt;default>.'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 <i>%s</i></span>'
   # shellcheck disable=SC2059
   local help_text
   help_text="$(printf "${help_format}" "${help_heading}" "${help_content}")"
 
-  local set
-  if ! set="$("${select_sets}" select-set -mesg "${help_text}")"; then
+  local group
+  if ! group="$("${select_groups}" select-group -mesg "${help_text}")"; then
     exit 1
   fi
   local tool
   tool="$(_tool)"
-  "${tool}" "$@" switch-active-set "${set}"
+  "${tool}" "$@" switch-active-group "${group}"
 }
 
 # ---------------------------------------------------------------------------
-# assign — assign focused workspace to a set
+# assign — assign focused workspace to a group
 # ---------------------------------------------------------------------------
 
 cmd_assign() {
-  local select_sets
-  select_sets="$(get_tool swi3-sets)"
-  local help_heading='Select a set to assign to the focused workspace.'
-  local help_content='You can assign it to a new set by typing a new name.
-Note that the default set is shown as &lt;default>.'
+  local select_groups
+  select_groups="$(get_tool swi3-groups)"
+  local help_heading='Select a group to assign to the focused workspace.'
+  local help_content='You can assign it to a new group by typing a new name.
+Note that the default group is shown as &lt;default>.'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 <i>%s</i></span>'
   # shellcheck disable=SC2059
   local help_text
   help_text="$(printf "${help_format}" "${help_heading}" "${help_content}")"
 
-  local set
-  if ! set="$("${select_sets}" select-set -mesg "${help_text}")"; then
+  local group
+  if ! group="$("${select_groups}" select-group -mesg "${help_text}")"; then
     exit 1
   fi
   local tool
   tool="$(_tool)"
-  "${tool}" "$@" assign-workspace-to-set "${set}"
+  "${tool}" "$@" assign-workspace-to-group "${group}"
 }
 
 # ---------------------------------------------------------------------------
-# assign-switch — assign focused workspace to a set and switch to it
+# assign-switch — assign focused workspace to a group and switch to it
 # ---------------------------------------------------------------------------
 
 cmd_assign_switch() {
-  local select_sets
-  select_sets="$(get_tool swi3-sets)"
-  local help_heading='Select a set to assign the focused workspace to and switch to.'
-  local help_content='You can assign it to a new set by typing a new name.
-Note that the default set is shown as &lt;default>.'
+  local select_groups
+  select_groups="$(get_tool swi3-groups)"
+  local help_heading='Select a group to assign the focused workspace to and switch to.'
+  local help_content='You can assign it to a new group by typing a new name.
+Note that the default group is shown as &lt;default>.'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 <i>%s</i></span>'
   # shellcheck disable=SC2059
   local help_text
   help_text="$(printf "${help_format}" "${help_heading}" "${help_content}")"
 
-  local set
-  if ! set="$("${select_sets}" select-set -mesg "${help_text}")"; then
+  local group
+  if ! group="$("${select_groups}" select-group -mesg "${help_text}")"; then
     exit 1
   fi
   local tool
   tool="$(_tool)"
-  "${tool}" "$@" assign-workspace-to-set "${set}"
-  "${tool}" "$@" switch-active-set "${set}"
+  "${tool}" "$@" assign-workspace-to-group "${group}"
+  "${tool}" "$@" switch-active-group "${group}"
 }
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ Note that the default set is shown as &lt;default>.'
 
 cmd_focus() {
   local help_heading='Select a workspace to focus on'
-  local help_content='You can focus on a new (non existing) workspace by using the format "set:number", for example "work:2"'
+  local help_content='You can focus on a new (non existing) workspace by using the format "group:number", for example "work:2"'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 <i>%s</i></span>'
   # shellcheck disable=SC2059
@@ -164,11 +164,11 @@ cmd_focus() {
       exit
     fi
   done
-  # No existing workspace selected — assume "set:local_number" format.
-  local set local_number
-  set="${selected%%:*}"
+  # No existing workspace selected — assume "group:local_number" format.
+  local group local_number
+  group="${selected%%:*}"
   local_number="${selected##*:}"
-  "${tool}" workspace-number --set-name "${set}" "${local_number}"
+  "${tool}" workspace-number --group-name "${group}" "${local_number}"
 }
 
 # ---------------------------------------------------------------------------
@@ -177,8 +177,8 @@ cmd_focus() {
 
 cmd_move() {
   local help_heading='Select a workspace to move the focused container into'
-  local help_content='You can select a new (non existing) workspace by using the format "set:number", for example "work:2".
-Displayed table columns: set, number, window icons, and name.'
+  local help_content='You can select a new (non existing) workspace by using the format "group:number", for example "work:2".
+Displayed table columns: group, number, window icons, and name.'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 <i>%s</i></span>'
   # shellcheck disable=SC2059
@@ -212,11 +212,11 @@ Displayed table columns: set, number, window icons, and name.'
       exit
     fi
   done
-  # No existing workspace selected — assume "set:local_number" format.
-  local set local_number
-  set="${selected%%:*}"
+  # No existing workspace selected — assume "group:local_number" format.
+  local group local_number
+  group="${selected%%:*}"
   local_number="${selected##*:}"
-  "${tool}" move-to-number --set-name "${set}" "${local_number}"
+  "${tool}" move-to-number --group-name "${group}" "${local_number}"
 }
 
 # ---------------------------------------------------------------------------
@@ -239,14 +239,14 @@ _do_rename() {
     fields=('')
     num_fields=1
   fi
-  local static_name_arg=() local_number_arg=() set_arg=()
+  local static_name_arg=() local_number_arg=() group_arg=()
   if ((num_fields == 1)); then
     static_name_arg=('--name' "${fields[0]}")
   elif ((num_fields == 2)); then
     [[ -n "${fields[0]}" ]] && static_name_arg=('--name' "${fields[0]}")
     [[ -n "${fields[1]}" ]] && local_number_arg=('--number' "${fields[1]}")
   elif ((num_fields == 3)); then
-    [[ -n "${fields[0]}" ]] && set_arg=('--set' "${fields[0]}")
+    [[ -n "${fields[0]}" ]] && group_arg=('--set' "${fields[0]}")
     [[ -n "${fields[1]}" ]] && static_name_arg=('--name' "${fields[1]}")
     [[ -n "${fields[2]}" ]] && local_number_arg=('--number' "${fields[2]}")
   else
@@ -255,26 +255,26 @@ _do_rename() {
   fi
   [[ "${static_name_arg[1]:-}" == '-' ]] && static_name_arg[1]=''
   [[ "${local_number_arg[1]:-}" == '-' ]] && local_number_arg[1]=''
-  [[ "${set_arg[1]:-}" == '-' ]] && set_arg[1]=''
+  [[ "${group_arg[1]:-}" == '-' ]] && group_arg[1]=''
   "${tool}" rename-workspace "${static_name_arg[@]}" "${local_number_arg[@]}" \
-    "${set_arg[@]}"
+    "${group_arg[@]}"
 }
 
 cmd_rename() {
   local help_heading_format='Enter a new name for workspace "%s"'
-  local help_content_format='<i>By default only the name is changed, but you can also use colons to change the number or set, In addition, you can use an hyphen ("-") to reset a property.
+  local help_content_format='<i>By default only the name is changed, but you can also use colons to change the number or group. In addition, you can use an hyphen ("-") to reset a property.
 Example inputs and what properties they change:</i> %s'
   local help_examples='
-+-----------+-----------------------------------+
-|   Input   |              Changes              |
-+-----------+-----------------------------------+
-| foo       | name="foo"                        |
-| foo:2     | name="foo", number=2              |
-| -:2       | name="", number=2                 |
-| :2        | number=2                          |
-| bar:foo:2 | set="bar", name="foo", number=2   |
-| bar::2    | set="bar", number=2               |
-+-----------+-----------------------------------+'
++-----------+-------------------------------------+
+|   Input   |              Changes                |
++-----------+-------------------------------------+
+| foo       | name="foo"                          |
+| foo:2     | name="foo", number=2                |
+| -:2       | name="", number=2                   |
+| :2        | number=2                            |
+| bar:foo:2 | group="bar", name="foo", number=2   |
+| bar::2    | group="bar", number=2               |
++-----------+-------------------------------------+'
   local help_format='<span alpha="50%%" size="smaller"><b>%s</b>
 %s</span>'
   local tool
@@ -322,73 +322,73 @@ cmd_polybar() {
   tool="$(_tool)"
 
   _ows() {
-    local ws_num="$1" set="$2"
-    [[ "${set}" == "default" ]] && set=""
-    echo "swi3-sets workspace-number ${ws_num} --set-name \"${set}\""
+    local ws_num="$1" group="$2"
+    [[ "${group}" == "default" ]] && group=""
+    echo "swi3-groups workspace-number ${ws_num} --group-name \"${group}\""
   }
 
   _ch_st() {
-    local set="$1"
-    [[ "${set}" == "default" ]] && set=""
-    echo "swi3-sets switch-active-set \"${set}\""
+    local group="$1"
+    [[ "${group}" == "default" ]] && group=""
+    echo "swi3-groups switch-active-group \"${group}\""
   }
 
   _txt_item() {
-    local display="$1" set="$2" ws_num="$3" global_num="$4"
+    local display="$1" group="$2" ws_num="$3" global_num="$4"
     local ws_screen=$(( global_num / 100000 ))
     if [[ ${ws_screen} -eq 0 ]] || [[ -z "${COLOR_EXTERNAL_MONITOR}" ]]; then
-      echo "%{A1:$(_ows "${ws_num}" "${set}"):}${display}%{A}"
+      echo "%{A1:$(_ows "${ws_num}" "${group}"):}${display}%{A}"
     else
       local w
       w=$(echo "${display}" | sed -e "s/\([^0-9]*\)\([[:digit:]]\+\)\([^0-9]*\)/\1%{F${COLOR_EXTERNAL_MONITOR}}\2%{F-}\3/")
-      echo "%{A1:$(_ows "${ws_num}" "${set}"):}${w}%{A}"
+      echo "%{A1:$(_ows "${ws_num}" "${group}"):}${w}%{A}"
     fi
   }
 
   mapfile -t ws_data < <("${tool}" list-workspaces \
     --fields 'global_number,set,local_number,focused')
 
-  declare -a ws_globals ws_sets ws_locals ws_focused
+  declare -a ws_globals ws_groups ws_locals ws_focused
   local line
   for line in "${ws_data[@]}"; do
     IFS=$'\t' read -r g st l f <<< "${line}"
     ws_globals+=("${g}")
-    ws_sets+=("${st}")
+    ws_groups+=("${st}")
     ws_locals+=("${l}")
     ws_focused+=("${f}")
   done
 
-  local current_set="" current_local=""
+  local current_group="" current_local=""
   local i
   for i in "${!ws_focused[@]}"; do
     if [[ "${ws_focused[${i}]}" == "True" ]]; then
-      current_set="${ws_sets[${i}]}"
+      current_group="${ws_groups[${i}]}"
       current_local="${ws_locals[${i}]}"
       break
     fi
   done
 
-  declare -a seen_sets
-  declare -A seen_set_map
+  declare -a seen_groups
+  declare -A seen_group_map
   local st
-  for st in "${ws_sets[@]}"; do
-    if [[ -z "${seen_set_map[${st}]+x}" ]]; then
-      seen_sets+=("${st}")
-      seen_set_map["${st}"]=1
+  for st in "${ws_groups[@]}"; do
+    if [[ -z "${seen_group_map[${st}]+x}" ]]; then
+      seen_groups+=("${st}")
+      seen_group_map["${st}"]=1
     fi
   done
 
   local text=""
-  local set
-  for set in "${seen_sets[@]}"; do
-    local display_set="${set:-default}"
-    text="${text}%{A1:$(_ch_st "${display_set}"):}${display_set}:%{A}"
+  local group
+  for group in "${seen_groups[@]}"; do
+    local display_group="${group:-default}"
+    text="${text}%{A1:$(_ch_st "${display_group}"):}${display_group}:%{A}"
 
     declare -a st_locals st_globals
     st_locals=()
     st_globals=()
-    for i in "${!ws_sets[@]}"; do
-      if [[ "${ws_sets[${i}]}" == "${set}" ]]; then
+    for i in "${!ws_groups[@]}"; do
+      if [[ "${ws_groups[${i}]}" == "${group}" ]]; then
         st_locals+=("${ws_locals[${i}]}")
         st_globals+=("${ws_globals[${i}]}")
       fi
@@ -404,26 +404,26 @@ cmd_polybar() {
       ws_num="${st_locals[${j}]}"
       ws_long="${st_globals[${j}]}"
 
-      if [[ "${ws_num}" == "${current_local}" ]] && [[ "${set}" == "${current_set}" ]]; then
-        text="${text}%{u#a3be8c}%{+u} %{F${COLOR_CURRENT_WS}}$(_txt_item "${ws_num}" "${display_set}" "${ws_num}" "${ws_long}")%{F-} %{-u}"
-      elif [[ "${set}" == "${current_set}" ]] || [[ "${SHORTHAND_ENABLED}" != "1" ]]; then
-        text="${text}$(_txt_item " ${ws_num} " "${display_set}" "${ws_num}" "${ws_long}")"
+      if [[ "${ws_num}" == "${current_local}" ]] && [[ "${group}" == "${current_group}" ]]; then
+        text="${text}%{u#a3be8c}%{+u} %{F${COLOR_CURRENT_WS}}$(_txt_item "${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")%{F-} %{-u}"
+      elif [[ "${group}" == "${current_group}" ]] || [[ "${SHORTHAND_ENABLED}" != "1" ]]; then
+        text="${text}$(_txt_item " ${ws_num} " "${display_group}" "${ws_num}" "${ws_long}")"
       else
         if [[ "${j}" -eq 0 ]]; then
-          text="${text}$(_txt_item " ${ws_num}" "${display_set}" "${ws_num}" "${ws_long}")"
+          text="${text}$(_txt_item " ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
         elif ((ws_num > prev_local + 1)); then
           if [[ ${seq_count} -gt 2 ]]; then
-            text="${text}$(_txt_item "-${prev_local}" "${display_set}" "${prev_local}" "${prev_long}")"
+            text="${text}$(_txt_item "-${prev_local}" "${display_group}" "${prev_local}" "${prev_long}")"
           elif [[ ${seq_count} -eq 2 ]]; then
-            text="${text}$(_txt_item ", ${prev_local}" "${display_set}" "${prev_local}" "${prev_long}")"
+            text="${text}$(_txt_item ", ${prev_local}" "${display_group}" "${prev_local}" "${prev_long}")"
           fi
-          text="${text}$(_txt_item ", ${ws_num}" "${display_set}" "${ws_num}" "${ws_long}")"
+          text="${text}$(_txt_item ", ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
           seq_count=1
         elif [[ "${ws_num}" == "${last_local}" ]]; then
           if [[ ${seq_count} -gt 1 ]]; then
-            text="${text}$(_txt_item "-${ws_num}" "${display_set}" "${ws_num}" "${ws_long}")"
+            text="${text}$(_txt_item "-${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
           else
-            text="${text}$(_txt_item ", ${ws_num}" "${display_set}" "${ws_num}" "${ws_long}")"
+            text="${text}$(_txt_item ", ${ws_num}" "${display_group}" "${ws_num}" "${ws_long}")"
           fi
         else
           seq_count=$((seq_count + 1))
@@ -445,18 +445,19 @@ cmd_polybar() {
 
 usage() {
   cat <<EOF
-Usage: swi3-sets <command> [args...]
+Usage: swi3-groups <command> [args...]
 
 Commands:
-  switch-set      Select and activate a workspace set
-  assign          Assign focused workspace to a set
+  switch-group    Select and activate a workspace group
+  assign          Assign focused workspace to a group
+  assign-and-switch  Assign focused workspace to a group and switch to it
   focus           Focus on a workspace selected from a menu
   move            Move focused container to a workspace
   rename          Rename the focused workspace
   polybar         Output polybar module text
   waybar          Output waybar module JSON
 
-Any other command is passed directly to swi3-sets-client.
+Any other command is passed directly to swi3-groups-client.
 EOF
 }
 
@@ -470,14 +471,14 @@ main() {
   shift
 
   case "${cmd}" in
-    switch-set)     cmd_switch_set "$@" ;;
+    switch-group)   cmd_switch_group "$@" ;;
     assign)         cmd_assign "$@" ;;
-    assign-switch)  cmd_assign_switch "$@" ;;
+    assign-and-switch)  cmd_assign_switch "$@" ;;
     focus)          cmd_focus "$@" ;;
-    move)          cmd_move "$@" ;;
-    rename)        cmd_rename "$@" ;;
-    polybar)       cmd_polybar "$@" ;;
-    select-set)    cmd_select_set "$@" ;;
+    move)           cmd_move "$@" ;;
+    rename)         cmd_rename "$@" ;;
+    polybar)        cmd_polybar "$@" ;;
+    select-group)   cmd_select_group "$@" ;;
     *)
       local tool
       tool="$(_tool)"

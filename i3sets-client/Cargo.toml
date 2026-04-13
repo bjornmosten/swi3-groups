@@ -1,5 +1,5 @@
 [package]
-name = "swi3-sets-client"
+name = "swi3-groups-client"
 version = "0.1.0"
 edition = "2021"
 
