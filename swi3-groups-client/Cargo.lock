@@ -218,8 +218,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "swi3-sets-client"
-version = "0.1.0"
+name = "swi3-groups"
+version = "0.2.0"
 dependencies = [
  "clap",
  "swayipc",

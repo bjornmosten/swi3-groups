@@ -1,7 +1,11 @@
 [package]
-name = "swi3-sets-client"
-version = "0.1.0"
+name = "swi3-groups"
+version = "0.2.0"
 edition = "2021"
+
+[[bin]]
+name = "swi3-groups"
+path = "src/main.rs"
 
 [dependencies]
 swayipc = "3"

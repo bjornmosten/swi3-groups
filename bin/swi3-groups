@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 
-# swi3-sets — unified workspace set manager for i3 and sway.
+# swi3-groups — unified workspace set manager for i3 and sway.
 # See https://vaneyckt.io/posts/safer_bash_scripts_with_set_euxo_pipefail/
 set -o errexit -o errtrace -o nounset -o pipefail
 
-# shellcheck source=_swi3-sets-common.sh
-source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_swi3-sets-common.sh"
+# shellcheck source=_swi3-groups-common.sh
+source "$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/_swi3-groups-common.sh"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
 _tool() {
-  get_tool "${SWI3SETS_CLI:-swi3-sets-client}"
+  get_tool "${SWI3GROUPS_CLI:-swi3-groups-client}"
 }
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ cmd_select_set() {
 
 cmd_switch_set() {
   local select_sets
-  select_sets="$(get_tool swi3-sets)"
+  select_sets="$(get_tool swi3-groups)"
   local help_heading='Select a workspace set to activate.'
   local help_content='You can create a new set by typing a new name.
 Note that the default set is shown as &lt;default>.'
@@ -82,7 +82,7 @@ Note that the default set is shown as &lt;default>.'
 
 cmd_assign() {
   local select_sets
-  select_sets="$(get_tool swi3-sets)"
+  select_sets="$(get_tool swi3-groups)"
   local help_heading='Select a set to assign to the focused workspace.'
   local help_content='You can assign it to a new set by typing a new name.
 Note that the default set is shown as &lt;default>.'
@@ -102,12 +102,22 @@ Note that the default set is shown as &lt;default>.'
 }
 
 # ---------------------------------------------------------------------------
+# prev-workspace — focus the previous workspace in the active set
+# ---------------------------------------------------------------------------
+
+cmd_prev_workspace() {
+  local tool
+  tool="$(_tool)"
+  "${tool}" workspace-prev
+}
+
+# ---------------------------------------------------------------------------
 # assign-switch — assign focused workspace to a set and switch to it
 # ---------------------------------------------------------------------------
 
 cmd_assign_switch() {
   local select_sets
-  select_sets="$(get_tool swi3-sets)"
+  select_sets="$(get_tool swi3-groups)"
   local help_heading='Select a set to assign the focused workspace to and switch to.'
   local help_content='You can assign it to a new set by typing a new name.
 Note that the default set is shown as &lt;default>.'
@@ -324,13 +334,13 @@ cmd_polybar() {
   _ows() {
     local ws_num="$1" set="$2"
     [[ "${set}" == "default" ]] && set=""
-    echo "swi3-sets workspace-number ${ws_num} --set-name \"${set}\""
+    echo "swi3-groups workspace-number ${ws_num} --set-name \"${set}\""
   }
 
   _ch_st() {
     local set="$1"
     [[ "${set}" == "default" ]] && set=""
-    echo "swi3-sets switch-active-set \"${set}\""
+    echo "swi3-groups switch-active-set \"${set}\""
   }
 
   _txt_item() {
@@ -445,7 +455,7 @@ cmd_polybar() {
 
 usage() {
   cat <<EOF
-Usage: swi3-sets <command> [args...]
+Usage: swi3-groups <command> [args...]
 
 Commands:
   switch-set      Select and activate a workspace set
@@ -453,10 +463,11 @@ Commands:
   focus           Focus on a workspace selected from a menu
   move            Move focused container to a workspace
   rename          Rename the focused workspace
+  prev-workspace  Focus the previous workspace in the active set
   polybar         Output polybar module text
   waybar          Output waybar module JSON
 
-Any other command is passed directly to swi3-sets-client.
+Any other command is passed directly to swi3-groups-client.
 EOF
 }
 
@@ -476,6 +487,7 @@ main() {
     focus)          cmd_focus "$@" ;;
     move)          cmd_move "$@" ;;
     rename)        cmd_rename "$@" ;;
+    prev-workspace) cmd_prev_workspace "$@" ;;
     polybar)       cmd_polybar "$@" ;;
     select-set)    cmd_select_set "$@" ;;
     *)

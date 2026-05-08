@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::env;
-use std::process::{self, Command};
+use std::io::Write;
+use std::path::Path;
+use std::process::{self, Command, Stdio};
 
 use swayipc::{Connection, EventType, Fallible};
 
@@ -798,7 +800,7 @@ fn cmd_init_session(conn: &mut Connection) -> Fallible<String> {
     }
 
     // Step 2: rename each of those workspaces into the encoded form used by
-    // swi3-sets, placing them in the `<default>` (empty) set.
+    // swi3-groups, placing them in the `<default>` (empty) set.
     let workspaces = get_all_workspaces(conn)?;
     for (i, out) in outputs.iter().enumerate() {
         let n = (i + 1) as i64;
@@ -914,6 +916,624 @@ fn run_bar_updater(signal: u32) {
     }
 }
 
+// ── menu helpers (rofi/wofi/fuzzel/dmenu) ───────────────────────────────────
+
+fn command_exists(cmd: &str) -> bool {
+    if cmd.contains('/') {
+        return Path::new(cmd).is_file();
+    }
+    if let Ok(path) = env::var("PATH") {
+        for dir in path.split(':') {
+            if !dir.is_empty() && Path::new(dir).join(cmd).exists() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+struct MenuCmd {
+    cmd: String,
+    args: Vec<String>,
+}
+
+fn detect_menu_backend() -> Option<String> {
+    if let Ok(m) = env::var("SWI3SETS_MENU") {
+        if !m.trim().is_empty() {
+            return Some(m);
+        }
+    }
+    for cmd in &["rofi", "wofi", "fuzzel", "dmenu"] {
+        if command_exists(cmd) {
+            return Some((*cmd).to_string());
+        }
+    }
+    None
+}
+
+fn build_menu(
+    prompt: &str,
+    mesg: &str,
+    theme: &str,
+    focused_output: Option<&str>,
+) -> Option<MenuCmd> {
+    let backend = detect_menu_backend()?;
+    let head = backend.split_whitespace().next().unwrap_or("").to_string();
+    let mut args: Vec<String> = Vec::new();
+    match head.as_str() {
+        "rofi" => {
+            args.extend([
+                "-dmenu".to_string(),
+                "-p".to_string(),
+                prompt.to_string(),
+                "-kb-cancel".to_string(),
+                "Escape".to_string(),
+            ]);
+            if let Some(out) = focused_output {
+                if !out.is_empty() {
+                    args.push("-monitor".to_string());
+                    args.push(out.to_string());
+                }
+            }
+            if !theme.is_empty() {
+                args.push("-theme-str".to_string());
+                args.push(theme.to_string());
+            }
+            if !mesg.is_empty() {
+                args.push("-mesg".to_string());
+                args.push(mesg.to_string());
+            }
+            Some(MenuCmd { cmd: "rofi".to_string(), args })
+        }
+        "wofi" => {
+            args.extend([
+                "--dmenu".to_string(),
+                "--prompt".to_string(),
+                prompt.to_string(),
+            ]);
+            Some(MenuCmd { cmd: "wofi".to_string(), args })
+        }
+        "fuzzel" => {
+            args.extend([
+                "--dmenu".to_string(),
+                "--prompt".to_string(),
+                prompt.to_string(),
+            ]);
+            Some(MenuCmd { cmd: "fuzzel".to_string(), args })
+        }
+        "dmenu" => {
+            args.extend(["-p".to_string(), prompt.to_string()]);
+            Some(MenuCmd { cmd: "dmenu".to_string(), args })
+        }
+        _ => {
+            // Custom user-supplied command, possibly with embedded args.
+            let mut parts = backend.split_whitespace().map(String::from);
+            let cmd = parts.next()?;
+            let args: Vec<String> = parts.collect();
+            Some(MenuCmd { cmd, args })
+        }
+    }
+}
+
+fn run_menu(menu: &MenuCmd, input: &str) -> Result<Option<String>, String> {
+    let mut child = Command::new(&menu.cmd)
+        .args(&menu.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn menu '{}': {}", menu.cmd, e))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(input.as_bytes())
+            .map_err(|e| format!("failed to write to menu stdin: {}", e))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("menu wait failed: {}", e))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let s = String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches('\n')
+        .to_string();
+    if s.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(s))
+    }
+}
+
+fn focused_output_for_menu(conn: &mut Connection) -> Option<String> {
+    get_focused_monitor_name(conn).ok()
+}
+
+/// Format rows into a left-aligned column table with the given separator.
+fn format_table(rows: &[Vec<String>], separator: &str) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let mut widths = vec![0usize; ncols];
+    for r in rows {
+        for (i, c) in r.iter().enumerate() {
+            widths[i] = widths[i].max(c.chars().count());
+        }
+    }
+    rows.iter()
+        .map(|r| {
+            let parts: Vec<String> = r
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let w = widths[i];
+                    let pad = w.saturating_sub(c.chars().count());
+                    format!("{}{}", c, " ".repeat(pad))
+                })
+                .collect();
+            parts.join(separator).trim_end().to_string()
+        })
+        .collect()
+}
+
+// ── high-level commands previously in shell scripts ─────────────────────────
+
+const DEFAULT_SET_ITEM: &str = "<default>";
+
+fn list_sets(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<Vec<String>> {
+    let workspaces = if focused_monitor_only {
+        let monitor = get_focused_monitor_name(conn)?;
+        get_monitor_workspaces(conn, &monitor)?
+    } else {
+        get_all_workspaces(conn)?
+    };
+    Ok(set_to_workspaces_ordered(&workspaces)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect())
+}
+
+fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, String> {
+    let sets = list_sets(conn, false).map_err(|e| e.to_string())?;
+    let mut input = String::new();
+    // Default set always offered first.
+    let mut seen_default = false;
+    for s in &sets {
+        if s.is_empty() {
+            seen_default = true;
+        }
+    }
+    if !seen_default {
+        input.push_str(DEFAULT_SET_ITEM);
+        input.push('\n');
+    }
+    for s in &sets {
+        if s.is_empty() {
+            input.push_str(DEFAULT_SET_ITEM);
+        } else {
+            input.push_str(s);
+        }
+        input.push('\n');
+    }
+    let focused_out = focused_output_for_menu(conn);
+    let menu = build_menu(
+        "Workspace Set",
+        mesg,
+        "window {width: 60ch;} listview {lines: 10;}",
+        focused_out.as_deref(),
+    )
+    .ok_or_else(|| {
+        "no menu launcher found (install rofi, wofi, fuzzel, or dmenu; or set SWI3SETS_MENU)"
+            .to_string()
+    })?;
+    let chosen = run_menu(&menu, &input)?;
+    Ok(chosen.map(|c| {
+        if c == DEFAULT_SET_ITEM {
+            String::new()
+        } else {
+            c
+        }
+    }))
+}
+
+fn cmd_switch_set(conn: &mut Connection) -> Result<String, String> {
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a workspace set to activate.</b>\n\
+<i>You can create a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let Some(set) = cmd_select_set(conn, mesg)? else {
+        return Ok(String::new());
+    };
+    cmd_switch_active_group(conn, &set, false).map_err(|e| e.to_string())
+}
+
+fn cmd_assign_menu(conn: &mut Connection) -> Result<String, String> {
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a set to assign to the focused workspace.</b>\n\
+<i>You can assign it to a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let Some(set) = cmd_select_set(conn, mesg)? else {
+        return Ok(String::new());
+    };
+    cmd_assign_workspace_to_group(conn, &set).map_err(|e| e.to_string())
+}
+
+fn cmd_assign_switch_menu(conn: &mut Connection) -> Result<String, String> {
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a set to assign the focused workspace to and switch to.</b>\n\
+<i>You can assign it to a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let Some(set) = cmd_select_set(conn, mesg)? else {
+        return Ok(String::new());
+    };
+    cmd_assign_workspace_to_group(conn, &set).map_err(|e| e.to_string())?;
+    cmd_switch_active_group(conn, &set, false).map_err(|e| e.to_string())
+}
+
+fn cmd_focus_menu(conn: &mut Connection) -> Result<String, String> {
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a workspace to focus on</b>\n\
+<i>You can focus on a new (non existing) workspace by using the format \"set:number\", for example \"work:2\"</i></span>";
+    let workspaces = get_all_workspaces(conn).map_err(|e| e.to_string())?;
+    let rows: Vec<Vec<String>> = workspaces
+        .iter()
+        .map(|ws| {
+            let m = parse_name(&ws.name);
+            vec![
+                m.set.clone().unwrap_or_default(),
+                get_local_number(&m).map(|n| n.to_string()).unwrap_or_default(),
+                String::new(),
+                m.static_name.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    let displayed = format_table(&rows, "    ");
+    let global_names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
+    let focused_out = focused_output_for_menu(conn);
+    let menu = build_menu(
+        "Workspace",
+        mesg,
+        "window {width: 60ch;}",
+        focused_out.as_deref(),
+    )
+    .ok_or_else(|| "no menu launcher found".to_string())?;
+    let input = displayed.join("\n");
+    let Some(selected) = run_menu(&menu, &input)? else {
+        return Ok(String::new());
+    };
+    if let Some(idx) = displayed.iter().position(|line| *line == selected) {
+        let target = &global_names[idx];
+        focus_workspace(conn, target, false).map_err(|e| e.to_string())?;
+        return Ok(String::new());
+    }
+    // Fall back to "set:local_number" form.
+    let (set, num) = parse_set_local(&selected)?;
+    cmd_workspace_number(conn, num, &SetContext::Named(set), true).map_err(|e| e.to_string())
+}
+
+fn cmd_move_menu(conn: &mut Connection) -> Result<String, String> {
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a workspace to move the focused container into</b>\n\
+<i>You can select a new (non existing) workspace by using the format \"set:number\", for example \"work:2\".\nDisplayed columns: set, number, window icons, name.</i></span>";
+    let workspaces = get_all_workspaces(conn).map_err(|e| e.to_string())?;
+    let rows: Vec<Vec<String>> = workspaces
+        .iter()
+        .map(|ws| {
+            let m = parse_name(&ws.name);
+            vec![
+                m.set.clone().unwrap_or_default(),
+                get_local_number(&m).map(|n| n.to_string()).unwrap_or_default(),
+                String::new(),
+                m.static_name.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    let displayed = format_table(&rows, "    ");
+    let global_names: Vec<String> = workspaces.iter().map(|w| w.name.clone()).collect();
+    let focused_out = focused_output_for_menu(conn);
+    let menu = build_menu(
+        "Workspace",
+        mesg,
+        "window {width: 60ch;}",
+        focused_out.as_deref(),
+    )
+    .ok_or_else(|| "no menu launcher found".to_string())?;
+    let input = displayed.join("\n");
+    let Some(selected) = run_menu(&menu, &input)? else {
+        return Ok(String::new());
+    };
+    if let Some(idx) = displayed.iter().position(|line| *line == selected) {
+        let target = &global_names[idx];
+        send_i3_command(
+            conn,
+            &format!(
+                "move container to workspace \"{}\"",
+                target.replace('"', "\\\"")
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(String::new());
+    }
+    let (set, num) = parse_set_local(&selected)?;
+    cmd_move_to_number(conn, num, &SetContext::Named(set), false).map_err(|e| e.to_string())
+}
+
+fn parse_set_local(s: &str) -> Result<(String, i64), String> {
+    let mut it = s.splitn(2, ':');
+    let set = it.next().unwrap_or("").to_string();
+    let num_str = it
+        .next()
+        .ok_or_else(|| format!("invalid 'set:number' input: {}", s))?;
+    let num: i64 = num_str
+        .parse()
+        .map_err(|_| format!("invalid number in '{}'", s))?;
+    Ok((set, num))
+}
+
+fn cmd_rename_menu(conn: &mut Connection) -> Result<String, String> {
+    let focused = get_focused_workspace(conn).map_err(|e| e.to_string())?;
+    let current_name = parse_name(&focused.name)
+        .static_name
+        .unwrap_or_default();
+    let mesg = format!(
+        "<span alpha=\"50%\" size=\"smaller\"><b>Enter a new name for workspace \"{}\"</b>\n\
+<i>By default only the name is changed, but you can also use colons to change the number or set, In addition, you can use an hyphen (\"-\") to reset a property.\n\
+Examples:  foo  |  foo:2  |  -:2  |  :2  |  bar:foo:2  |  bar::2</i></span>",
+        current_name
+    );
+    let focused_out = focused_output_for_menu(conn);
+    let menu = build_menu(
+        "Rename",
+        &mesg,
+        "window {width: 60ch;} listview {lines: 0;}",
+        focused_out.as_deref(),
+    )
+    .ok_or_else(|| "no menu launcher found".to_string())?;
+    let Some(pattern) = run_menu(&menu, "")? else {
+        return Ok(String::new());
+    };
+    apply_rename_pattern(conn, &pattern)
+}
+
+fn apply_rename_pattern(conn: &mut Connection, pattern: &str) -> Result<String, String> {
+    let parts: Vec<&str> = pattern.split(':').collect();
+    let mut name: Option<String> = None;
+    let mut number: Option<i64> = None;
+    let mut set: Option<String> = None;
+
+    let resolve = |s: &str| -> Option<String> {
+        if s == "-" {
+            Some(String::new())
+        } else if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    };
+    let resolve_num = |s: &str| -> Result<Option<i64>, String> {
+        if s == "-" || s.is_empty() {
+            Ok(None)
+        } else {
+            s.parse::<i64>()
+                .map(Some)
+                .map_err(|_| format!("invalid number in rename pattern: {}", s))
+        }
+    };
+
+    match parts.len() {
+        0 => {}
+        1 => {
+            name = resolve(parts[0]);
+        }
+        2 => {
+            name = resolve(parts[0]);
+            number = resolve_num(parts[1])?;
+        }
+        3 => {
+            set = resolve(parts[0]);
+            name = resolve(parts[1]);
+            number = resolve_num(parts[2])?;
+        }
+        _ => return Err("name pattern cannot contain more than 3 colons".to_string()),
+    }
+    cmd_rename_workspace(conn, name.as_deref(), number, set.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+// ── polybar text formatter ──────────────────────────────────────────────────
+
+#[derive(Default, Clone)]
+struct PolybarOpts {
+    color_external_monitor: String,
+    color_current_ws: String,
+    shorthand: bool,
+}
+
+fn parse_polybar_opts(args: &[String]) -> PolybarOpts {
+    let mut o = PolybarOpts::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-c" => {
+                i += 1;
+                if i < args.len() {
+                    o.color_current_ws = args[i].clone();
+                }
+            }
+            "-e" => {
+                i += 1;
+                if i < args.len() {
+                    o.color_external_monitor = args[i].clone();
+                }
+            }
+            "-s" => o.shorthand = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    o
+}
+
+fn cmd_polybar(conn: &mut Connection, opts: &PolybarOpts) -> Fallible<String> {
+    let workspaces = get_all_workspaces(conn)?;
+
+    let mut globals: Vec<i64> = Vec::new();
+    let mut sets: Vec<String> = Vec::new();
+    let mut locals: Vec<i64> = Vec::new();
+    let mut focused: Vec<bool> = Vec::new();
+    for ws in &workspaces {
+        let m = parse_name(&ws.name);
+        globals.push(m.global_number.unwrap_or(0));
+        sets.push(m.set.clone().unwrap_or_default());
+        locals.push(get_local_number(&m).unwrap_or(0));
+        focused.push(ws.focused);
+    }
+
+    let (current_set, current_local) = focused
+        .iter()
+        .position(|f| *f)
+        .map(|i| (sets[i].clone(), locals[i]))
+        .unwrap_or((String::new(), 0));
+
+    let mut seen_sets: Vec<String> = Vec::new();
+    for s in &sets {
+        if !seen_sets.contains(s) {
+            seen_sets.push(s.clone());
+        }
+    }
+
+    let ows = |ws_num: i64, set: &str| -> String {
+        let s = if set == "default" { "" } else { set };
+        format!("swi3-groups workspace-number {} --set-name \"{}\"", ws_num, s)
+    };
+    let ch_st = |set: &str| -> String {
+        let s = if set == "default" { "" } else { set };
+        format!("swi3-groups switch-active-set \"{}\"", s)
+    };
+    let txt_item = |display: &str, set: &str, ws_num: i64, global_num: i64| -> String {
+        let ws_screen = global_num / 100000;
+        if ws_screen == 0 || opts.color_external_monitor.is_empty() {
+            format!("%{{A1:{}:}}{}%{{A}}", ows(ws_num, set), display)
+        } else {
+            // Approximate: color the digit run inside `display`.
+            let mut colored = String::new();
+            let mut chars = display.chars().peekable();
+            let mut wrote = false;
+            while let Some(c) = chars.next() {
+                if !wrote && c.is_ascii_digit() {
+                    colored.push_str(&format!("%{{F{}}}", opts.color_external_monitor));
+                    colored.push(c);
+                    while let Some(&nc) = chars.peek() {
+                        if nc.is_ascii_digit() {
+                            colored.push(nc);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    colored.push_str("%{F-}");
+                    wrote = true;
+                } else {
+                    colored.push(c);
+                }
+            }
+            format!("%{{A1:{}:}}{}%{{A}}", ows(ws_num, set), colored)
+        }
+    };
+
+    let mut text = String::new();
+    for set in &seen_sets {
+        let display_set = if set.is_empty() { "default" } else { set.as_str() };
+        text.push_str(&format!("%{{A1:{}:}}{}:%{{A}}", ch_st(display_set), display_set));
+
+        let mut st_locals: Vec<i64> = Vec::new();
+        let mut st_globals: Vec<i64> = Vec::new();
+        for i in 0..sets.len() {
+            if &sets[i] == set {
+                st_locals.push(locals[i]);
+                st_globals.push(globals[i]);
+            }
+        }
+
+        let local_count = st_locals.len();
+        if local_count == 0 {
+            text.push_str(" | ");
+            continue;
+        }
+        let last_local = st_locals[local_count - 1];
+        let mut prev_local = st_locals[0];
+        let mut prev_long = st_globals[0];
+        let mut seq_count: i64 = 1;
+
+        for j in 0..local_count {
+            let ws_num = st_locals[j];
+            let ws_long = st_globals[j];
+
+            if ws_num == current_local && set == &current_set {
+                text.push_str(&format!(
+                    "%{{u#a3be8c}}%{{+u}} %{{F{}}}{}%{{F-}} %{{-u}}",
+                    opts.color_current_ws,
+                    txt_item(&ws_num.to_string(), display_set, ws_num, ws_long)
+                ));
+            } else if set == &current_set || !opts.shorthand {
+                text.push_str(&txt_item(
+                    &format!(" {} ", ws_num),
+                    display_set,
+                    ws_num,
+                    ws_long,
+                ));
+            } else if j == 0 {
+                text.push_str(&txt_item(
+                    &format!(" {}", ws_num),
+                    display_set,
+                    ws_num,
+                    ws_long,
+                ));
+            } else if ws_num > prev_local + 1 {
+                if seq_count > 2 {
+                    text.push_str(&txt_item(
+                        &format!("-{}", prev_local),
+                        display_set,
+                        prev_local,
+                        prev_long,
+                    ));
+                } else if seq_count == 2 {
+                    text.push_str(&txt_item(
+                        &format!(", {}", prev_local),
+                        display_set,
+                        prev_local,
+                        prev_long,
+                    ));
+                }
+                text.push_str(&txt_item(
+                    &format!(", {}", ws_num),
+                    display_set,
+                    ws_num,
+                    ws_long,
+                ));
+                seq_count = 1;
+            } else if ws_num == last_local {
+                if seq_count > 1 {
+                    text.push_str(&txt_item(
+                        &format!("-{}", ws_num),
+                        display_set,
+                        ws_num,
+                        ws_long,
+                    ));
+                } else {
+                    text.push_str(&txt_item(
+                        &format!(", {}", ws_num),
+                        display_set,
+                        ws_num,
+                        ws_long,
+                    ));
+                }
+            } else {
+                seq_count += 1;
+            }
+            prev_local = ws_num;
+            prev_long = ws_long;
+        }
+        text.push_str(" | ");
+    }
+
+    if let Some(stripped) = text.strip_suffix(" | ") {
+        text = stripped.to_string();
+    }
+    Ok(text)
+}
+
 // ── WM detection (no IPC needed) ─────────────────────────────────────────────
 
 fn detect_wm() -> &'static str {
@@ -958,7 +1578,7 @@ fn parse_set_context(args: &[String]) -> (SetContext, Vec<String>) {
             "--set-focused" => {
                 ctx = SetContext::Focused;
             }
-            "--group-name" => {
+            "--group-name" | "--set-name" => {
                 i += 1;
                 if i < args.len() {
                     ctx = SetContext::Named(args[i].clone());
@@ -1006,7 +1626,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
         Connection::new().map_err(|e| format!("error: could not connect to i3/sway: {}", e))?;
 
     let result = match cmd {
-        "list-groups" => {
+        "list-groups" | "list-sets" => {
             let monitor_only = has_flag(&rest, "--focused-monitor-only");
             cmd_list_groups(&mut conn, monitor_only)
         }
@@ -1057,13 +1677,13 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let (set_ctx, _) = parse_set_context(&rest);
             cmd_move_to_new(&mut conn, &set_ctx)
         }
-        "switch-active-group" => {
+        "switch-active-group" | "switch-active-set" => {
             let focused_monitor_only = has_flag(&rest, "--focused-monitor-only");
             let group = rest
                 .iter()
                 .find(|a| !a.starts_with('-'))
-                .ok_or_else(|| "error: switch-active-group requires a group name".to_string())?
-                .clone();
+                .cloned()
+                .unwrap_or_default();
             cmd_switch_active_group(&mut conn, &group, focused_monitor_only)
         }
         "rename-workspace" => {
@@ -1072,18 +1692,31 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let set = get_flag_value(&rest, "--set").map(str::to_string);
             cmd_rename_workspace(&mut conn, name.as_deref(), number, set.as_deref())
         }
-        "assign-workspace-to-group" => {
+        "assign-workspace-to-group" | "assign-workspace-to-set" => {
             let group = rest
                 .iter()
                 .find(|a| !a.starts_with('-'))
-                .ok_or_else(|| {
-                    "error: assign-workspace-to-group requires a group name".to_string()
-                })?
-                .clone();
+                .cloned()
+                .unwrap_or_default();
             cmd_assign_workspace_to_group(&mut conn, &group)
         }
         "waybar" => cmd_waybar(&mut conn),
         "init-session" => cmd_init_session(&mut conn),
+        "polybar" => {
+            let opts = parse_polybar_opts(&rest);
+            return cmd_polybar(&mut conn, &opts).map_err(|e| format!("error: {}", e));
+        }
+        "select-set" => {
+            // Optional `-mesg <text>` honoured for compatibility.
+            let mesg = get_flag_value(&rest, "-mesg").unwrap_or("").to_string();
+            return cmd_select_set(&mut conn, &mesg).map(|s| s.unwrap_or_default());
+        }
+        "switch-set" => return cmd_switch_set(&mut conn),
+        "assign" => return cmd_assign_menu(&mut conn),
+        "assign-switch" => return cmd_assign_switch_menu(&mut conn),
+        "focus" => return cmd_focus_menu(&mut conn),
+        "move" => return cmd_move_menu(&mut conn),
+        "rename" => return cmd_rename_menu(&mut conn),
         _ => return Err(format!("error: unknown command: {}", cmd)),
     };
 

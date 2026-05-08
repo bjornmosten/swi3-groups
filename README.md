@@ -268,19 +268,19 @@ managers, and the tools auto-detect which WM is running (via `$SWAYSOCK` /
 `$I3SOCK`). Your i3 config keybindings can be copied directly to a sway config
 with no changes — the same commands work on both.
 
-The `i3sets-client` binary handles WM detection for:
+The `swi3-groups-client` binary handles WM detection for:
 
 - **Socket path**: Uses `$WAYLAND_DISPLAY` on sway, `$DISPLAY` on i3
-- **WM commands**: `i3sets-client wm-msg <args>` runs `swaymsg` or `i3-msg`
+- **WM commands**: `swi3-groups-client wm-msg <args>` runs `swaymsg` or `i3-msg`
   as appropriate
-- **WM detection**: `i3sets-client detect-wm` prints `sway` or `i3`
+- **WM detection**: `swi3-groups-client detect-wm` prints `sway` or `i3`
 
 ### Environment variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `I3_WORKSPACE_SETS_SOCKET` | Override the Unix socket path | Auto-detected |
-| `I3_WORKSPACE_SETS_CLI` | Override the client binary name | `i3sets-client` |
+| `I3_WORKSPACE_SETS_CLI` | Override the client binary name | `swi3-groups-client` |
 | `WS_SETS_MENU_CMD` | Override the menu/launcher binary (e.g. `wofi`, `fuzzel`, `bemenu`) | `rofi` |
 
 ### Polybar
