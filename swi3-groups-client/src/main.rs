@@ -571,6 +571,32 @@ fn cmd_workspace_relative(conn: &mut Connection, offset: i64) -> Fallible<String
     Ok(String::new())
 }
 
+fn cmd_workspace_global_relative(conn: &mut Connection, offset: i64) -> Fallible<String> {
+    let focused = get_focused_workspace(conn)?;
+    let all = get_all_workspaces(conn)?;
+    let mut groups = set_to_workspaces_ordered(&all);
+    groups.sort_by(|a, b| a.0.cmp(&b.0));
+    let flat: Vec<(String, swayipc::Workspace)> = groups
+        .into_iter()
+        .flat_map(|(g, ws)| ws.into_iter().map(move |w| (g.clone(), w)))
+        .collect();
+    if flat.is_empty() {
+        return Ok(String::new());
+    }
+    let current = flat
+        .iter()
+        .position(|(_, ws)| ws.name == focused.name)
+        .unwrap_or(0);
+    let next = ((current as i64 + offset).rem_euclid(flat.len() as i64)) as usize;
+    let (target_group, target_ws) = &flat[next];
+    let focused_group = parse_name(&focused.name).set.unwrap_or_default();
+    if target_group != &focused_group {
+        cmd_switch_active_group(conn, target_group, false)?;
+    }
+    focus_workspace(conn, &target_ws.name, false)?;
+    Ok(String::new())
+}
+
 fn cmd_workspace_new(conn: &mut Connection, set_ctx: &SetContext) -> Fallible<String> {
     let set = resolve_set(conn, set_ctx)?;
     let ln = find_free_local_number(conn, &set)?;
@@ -1657,6 +1683,8 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
         }
         "workspace-next" => cmd_workspace_relative(&mut conn, 1),
         "workspace-prev" => cmd_workspace_relative(&mut conn, -1),
+        "next" | "workspace-next-global" => cmd_workspace_global_relative(&mut conn, 1),
+        "prev" | "workspace-prev-global" => cmd_workspace_global_relative(&mut conn, -1),
         "workspace-new" => {
             let (set_ctx, _) = parse_set_context(&rest);
             cmd_workspace_new(&mut conn, &set_ctx)

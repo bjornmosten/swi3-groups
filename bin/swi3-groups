@@ -465,6 +465,8 @@ Commands:
   move            Move focused container to a workspace
   rename          Rename the focused workspace
   prev-workspace  Focus the previous workspace in the active group
+  next            Focus the next workspace across all groups
+  prev            Focus the previous workspace across all groups
   polybar         Output polybar module text
   waybar          Output waybar module JSON
 
