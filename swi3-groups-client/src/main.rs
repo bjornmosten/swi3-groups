@@ -228,7 +228,8 @@ fn set_to_workspaces_ordered(
     order
         .into_iter()
         .map(|g| {
-            let v = map.remove(&g).unwrap();
+            let mut v = map.remove(&g).unwrap();
+            v.sort_by_key(|ws| get_local_number(&parse_name(&ws.name)).unwrap_or(i64::MAX));
             (g, v)
         })
         .collect()
@@ -448,6 +449,11 @@ fn get_workspace_by_local_number(
     Ok((create_workspace_name_for(conn, set, local_number)?, false))
 }
 
+fn cmd_switch_rewind(conn: &mut Connection) -> Fallible<String> {
+    send_i3_command(conn, "workspace back_and_forth")?;
+    Ok(String::new())
+}
+
 // ── command handlers ──────────────────────────────────────────────────────────
 
 fn cmd_list_groups(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<String> {
@@ -552,12 +558,14 @@ fn cmd_workspace_number(
 fn cmd_workspace_relative(conn: &mut Connection, offset: i64) -> Fallible<String> {
     let focused = get_focused_workspace(conn)?;
     let focused_set = parse_name(&focused.name).set.unwrap_or_default();
+    let focused_output = focused.output.clone();
     let all = get_all_workspaces(conn)?;
     let groups = set_to_workspaces_ordered(&all);
     let set_ws: Vec<swayipc::Workspace> = groups
         .into_iter()
         .filter(|(s, _)| *s == focused_set)
         .flat_map(|(_, ws)| ws)
+        .filter(|ws| ws.output == focused_output)
         .collect();
     if set_ws.is_empty() {
         return Ok(String::new());
@@ -573,12 +581,14 @@ fn cmd_workspace_relative(conn: &mut Connection, offset: i64) -> Fallible<String
 
 fn cmd_workspace_global_relative(conn: &mut Connection, offset: i64) -> Fallible<String> {
     let focused = get_focused_workspace(conn)?;
+    let focused_output = focused.output.clone();
     let all = get_all_workspaces(conn)?;
     let mut groups = set_to_workspaces_ordered(&all);
     groups.sort_by(|a, b| a.0.cmp(&b.0));
     let flat: Vec<(String, swayipc::Workspace)> = groups
         .into_iter()
         .flat_map(|(g, ws)| ws.into_iter().map(move |w| (g.clone(), w)))
+        .filter(|(_, ws)| ws.output == focused_output)
         .collect();
     if flat.is_empty() {
         return Ok(String::new());
@@ -588,11 +598,7 @@ fn cmd_workspace_global_relative(conn: &mut Connection, offset: i64) -> Fallible
         .position(|(_, ws)| ws.name == focused.name)
         .unwrap_or(0);
     let next = ((current as i64 + offset).rem_euclid(flat.len() as i64)) as usize;
-    let (target_group, target_ws) = &flat[next];
-    let focused_group = parse_name(&focused.name).set.unwrap_or_default();
-    if target_group != &focused_group {
-        cmd_switch_active_group(conn, target_group, false)?;
-    }
+    let (_target_group, target_ws) = &flat[next];
     focus_workspace(conn, &target_ws.name, false)?;
     Ok(String::new())
 }
@@ -1119,27 +1125,31 @@ fn list_sets(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<Vec<
 }
 
 fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, String> {
-    let sets = list_sets(conn, false).map_err(|e| e.to_string())?;
+    let workspaces = get_all_workspaces(conn).map_err(|e| e.to_string())?;
+    let groups = set_to_workspaces_ordered(&workspaces);
     let mut input = String::new();
-    // Default set always offered first.
-    let mut seen_default = false;
-    for s in &sets {
+    
+    // Check if default set is present
+    let mut has_default = false;
+    for (s, _) in &groups {
         if s.is_empty() {
-            seen_default = true;
+            has_default = true;
         }
     }
-    if !seen_default {
+    if !has_default {
         input.push_str(DEFAULT_SET_ITEM);
         input.push('\n');
     }
-    for s in &sets {
+    
+    for (s, _) in groups {
         if s.is_empty() {
             input.push_str(DEFAULT_SET_ITEM);
         } else {
-            input.push_str(s);
+            input.push_str(&s);
         }
         input.push('\n');
     }
+    
     let focused_out = focused_output_for_menu(conn);
     let menu = build_menu(
         "Workspace Set",
@@ -1147,18 +1157,10 @@ fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, S
         "window {width: 60ch;} listview {lines: 10;}",
         focused_out.as_deref(),
     )
-    .ok_or_else(|| {
-        "no menu launcher found (install rofi, wofi, fuzzel, or dmenu; or set SWI3SETS_MENU)"
-            .to_string()
-    })?;
+    .ok_or_else(|| "no menu launcher found".to_string())?;
+    
     let chosen = run_menu(&menu, &input)?;
-    Ok(chosen.map(|c| {
-        if c == DEFAULT_SET_ITEM {
-            String::new()
-        } else {
-            c
-        }
-    }))
+    Ok(chosen.map(|c| if c == DEFAULT_SET_ITEM { String::new() } else { c }))
 }
 
 fn cmd_switch_set(conn: &mut Connection) -> Result<String, String> {
@@ -1652,6 +1654,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
         Connection::new().map_err(|e| format!("error: could not connect to i3/sway: {}", e))?;
 
     let result = match cmd {
+        "switch-rewind" => cmd_switch_rewind(&mut conn),
         "list-groups" | "list-sets" => {
             let monitor_only = has_flag(&rest, "--focused-monitor-only");
             cmd_list_groups(&mut conn, monitor_only)
@@ -1739,6 +1742,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let mesg = get_flag_value(&rest, "-mesg").unwrap_or("").to_string();
             return cmd_select_set(&mut conn, &mesg).map(|s| s.unwrap_or_default());
         }
+        "select-group" => return cmd_select_set(&mut conn, "").map(|s| s.unwrap_or_default()),
         "switch-set" => return cmd_switch_set(&mut conn),
         "assign" => return cmd_assign_menu(&mut conn),
         "assign-switch" => return cmd_assign_switch_menu(&mut conn),
