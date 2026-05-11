@@ -1048,6 +1048,18 @@ fn build_menu(
 }
 
 fn run_menu(menu: &MenuCmd, input: &str) -> Result<Option<String>, String> {
+    // rofi uses an exclusive pidfile and refuses to start while another
+    // instance is alive ("Failed to set lock on pidfile: Rofi already running?").
+    // Kill any existing rofi so the new menu always wins.
+    let basename = Path::new(&menu.cmd)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(menu.cmd.as_str());
+    if basename == "rofi" {
+        let _ = Command::new("pkill").args(["-x", "rofi"]).status();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
     let mut child = Command::new(&menu.cmd)
         .args(&menu.args)
         .stdin(Stdio::piped())
@@ -1129,7 +1141,7 @@ fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, S
     let groups = set_to_workspaces_ordered(&workspaces);
     let mut input = String::new();
     
-    // Check if default set is present
+    // Check if default group is present
     let mut has_default = false;
     for (s, _) in &groups {
         if s.is_empty() {
@@ -1152,7 +1164,7 @@ fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, S
     
     let focused_out = focused_output_for_menu(conn);
     let menu = build_menu(
-        "Workspace Set",
+        "Workspace Group",
         mesg,
         "window {width: 60ch;} listview {lines: 10;}",
         focused_out.as_deref(),
@@ -1164,8 +1176,8 @@ fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, S
 }
 
 fn cmd_switch_set(conn: &mut Connection) -> Result<String, String> {
-    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a workspace set to activate.</b>\n\
-<i>You can create a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a workspace group to activate.</b>\n\
+<i>You can create a new group by typing a new name.\nNote that the default group is shown as &lt;default>.</i></span>";
     let Some(set) = cmd_select_set(conn, mesg)? else {
         return Ok(String::new());
     };
@@ -1173,8 +1185,8 @@ fn cmd_switch_set(conn: &mut Connection) -> Result<String, String> {
 }
 
 fn cmd_assign_menu(conn: &mut Connection) -> Result<String, String> {
-    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a set to assign to the focused workspace.</b>\n\
-<i>You can assign it to a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a group to assign to the focused workspace.</b>\n\
+<i>You can assign it to a new group by typing a new name.\nNote that the default group is shown as &lt;default>.</i></span>";
     let Some(set) = cmd_select_set(conn, mesg)? else {
         return Ok(String::new());
     };
@@ -1182,8 +1194,8 @@ fn cmd_assign_menu(conn: &mut Connection) -> Result<String, String> {
 }
 
 fn cmd_assign_switch_menu(conn: &mut Connection) -> Result<String, String> {
-    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a set to assign the focused workspace to and switch to.</b>\n\
-<i>You can assign it to a new set by typing a new name.\nNote that the default set is shown as &lt;default>.</i></span>";
+    let mesg = "<span alpha=\"50%\" size=\"smaller\"><b>Select a group to assign the focused workspace to and switch to.</b>\n\
+<i>You can assign it to a new group by typing a new name.\nNote that the default group is shown as &lt;default>.</i></span>";
     let Some(set) = cmd_select_set(conn, mesg)? else {
         return Ok(String::new());
     };
@@ -1423,11 +1435,11 @@ fn cmd_polybar(conn: &mut Connection, opts: &PolybarOpts) -> Fallible<String> {
 
     let ows = |ws_num: i64, set: &str| -> String {
         let s = if set == "default" { "" } else { set };
-        format!("swi3-groups workspace-number {} --set-name \"{}\"", ws_num, s)
+        format!("swi3-groups workspace-number {} --group-name \"{}\"", ws_num, s)
     };
     let ch_st = |set: &str| -> String {
         let s = if set == "default" { "" } else { set };
-        format!("swi3-groups switch-active-set \"{}\"", s)
+        format!("swi3-groups switch-active-group \"{}\"", s)
     };
     let txt_item = |display: &str, set: &str, ws_num: i64, global_num: i64| -> String {
         let ws_screen = global_num / 100000;
@@ -1600,13 +1612,13 @@ fn parse_set_context(args: &[String]) -> (SetContext, Vec<String>) {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--set-active" => {
+            "--group-active" => {
                 ctx = SetContext::Active;
             }
-            "--set-focused" => {
+            "--group-focused" => {
                 ctx = SetContext::Focused;
             }
-            "--group-name" | "--set-name" => {
+            "--group-name" => {
                 i += 1;
                 if i < args.len() {
                     ctx = SetContext::Named(args[i].clone());
@@ -1655,7 +1667,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
 
     let result = match cmd {
         "switch-rewind" => cmd_switch_rewind(&mut conn),
-        "list-groups" | "list-sets" => {
+        "list-groups" => {
             let monitor_only = has_flag(&rest, "--focused-monitor-only");
             cmd_list_groups(&mut conn, monitor_only)
         }
@@ -1708,7 +1720,7 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let (set_ctx, _) = parse_set_context(&rest);
             cmd_move_to_new(&mut conn, &set_ctx)
         }
-        "switch-active-group" | "switch-active-set" => {
+        "switch-active-group" => {
             let focused_monitor_only = has_flag(&rest, "--focused-monitor-only");
             let group = rest
                 .iter()
@@ -1720,10 +1732,10 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
         "rename-workspace" => {
             let name = get_flag_value(&rest, "--name").map(str::to_string);
             let number = get_flag_value(&rest, "--number").and_then(|s| s.parse::<i64>().ok());
-            let set = get_flag_value(&rest, "--set").map(str::to_string);
+            let set = get_flag_value(&rest, "--group").map(str::to_string);
             cmd_rename_workspace(&mut conn, name.as_deref(), number, set.as_deref())
         }
-        "assign-workspace-to-group" | "assign-workspace-to-set" => {
+        "assign-workspace-to-group" => {
             let group = rest
                 .iter()
                 .find(|a| !a.starts_with('-'))
@@ -1737,13 +1749,11 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
             let opts = parse_polybar_opts(&rest);
             return cmd_polybar(&mut conn, &opts).map_err(|e| format!("error: {}", e));
         }
-        "select-set" => {
-            // Optional `-mesg <text>` honoured for compatibility.
+        "select-group" => {
             let mesg = get_flag_value(&rest, "-mesg").unwrap_or("").to_string();
             return cmd_select_set(&mut conn, &mesg).map(|s| s.unwrap_or_default());
         }
-        "select-group" => return cmd_select_set(&mut conn, "").map(|s| s.unwrap_or_default()),
-        "switch-set" => return cmd_switch_set(&mut conn),
+        "switch-group" => return cmd_switch_set(&mut conn),
         "assign" => return cmd_assign_menu(&mut conn),
         "assign-switch" => return cmd_assign_switch_menu(&mut conn),
         "focus" => return cmd_focus_menu(&mut conn),
@@ -1753,6 +1763,452 @@ fn dispatch(argv: &[String]) -> Result<String, String> {
     };
 
     result.map_err(|e| format!("error: {}", e))
+}
+
+// ── doctor ───────────────────────────────────────────────────────────────────
+
+const VALID_CMDS: &[&str] = &[
+    "detect-wm", "wm-msg", "bar-updater", "doctor",
+    "switch-rewind",
+    "list-groups", "list-workspaces",
+    "workspace-number", "workspace-next", "workspace-prev",
+    "next", "prev", "workspace-next-global", "workspace-prev-global",
+    "workspace-new",
+    "move-to-number", "move-to-next", "move-to-prev", "move-to-new",
+    "switch-active-group",
+    "rename-workspace",
+    "assign-workspace-to-group",
+    "waybar", "init-session", "polybar",
+    "select-group",
+    "switch-group", "assign", "assign-switch", "focus", "move", "rename",
+];
+
+// (deprecated, replacement hint)
+const RENAMED_CMDS: &[(&str, &str)] = &[
+    ("list-sets",                      "list-groups"),
+    ("list-workspace-groups",          "list-groups"),
+    ("switch-active-set",              "switch-active-group"),
+    ("assign-workspace-to-set",        "assign-workspace-to-group"),
+    ("select-set",                     "select-group"),
+    ("switch-set",                     "switch-group"),
+    ("switch-to-last-workspace",       "switch-rewind"),
+    ("workspace-number-focused-group", "workspace-number --group-focused <N>"),
+    ("move-to-number-focused-group",   "move-to-number --group-focused <N>"),
+];
+
+const OLD_BINS: &[&str] = &[
+    "i3-workspace-sets",
+    "i3wsgroups",
+    "i3-switch-active-workspace-set",
+    "i3-assign-workspace-to-set",
+    "i3-focus-on-workspace",
+    "i3-move-to-workspace",
+    "i3-rename-workspace",
+    "i3-sets-waybar-module",
+    "i3-sets-bar-module-updater",
+    "i3-sets-polybar-module-updater",
+];
+
+struct Dr {
+    pass: usize,
+    warn: usize,
+    fail: usize,
+    color: bool,
+}
+
+impl Dr {
+    fn new() -> Self {
+        let color = env::var("NO_COLOR").is_err()
+            && env::var("TERM").map(|t| t != "dumb").unwrap_or(true);
+        Self { pass: 0, warn: 0, fail: 0, color }
+    }
+    fn esc<'a>(&self, code: &'a str) -> &'a str {
+        if self.color { code } else { "" }
+    }
+    fn ok(&mut self, msg: &str) {
+        println!("  {}[OK]{}   {}", self.esc("\x1b[0;32m"), self.esc("\x1b[0m"), msg);
+        self.pass += 1;
+    }
+    fn warn(&mut self, msg: &str) {
+        println!("  {}[WARN]{} {}", self.esc("\x1b[0;33m"), self.esc("\x1b[0m"), msg);
+        self.warn += 1;
+    }
+    fn fail(&mut self, msg: &str) {
+        println!("  {}[FAIL]{} {}", self.esc("\x1b[0;31m"), self.esc("\x1b[0m"), msg);
+        self.fail += 1;
+    }
+    fn info(&self, msg: &str) {
+        println!("       {}", msg);
+    }
+    fn section(&self, title: &str) {
+        let bar: String = "─".repeat(title.chars().count());
+        println!("\n{}{}{}\n{}", self.esc("\x1b[1m"), title, self.esc("\x1b[0m"), bar);
+    }
+    fn summary(&self) {
+        print!("\n{}Summary{}: ", self.esc("\x1b[1m"), self.esc("\x1b[0m"));
+        if self.fail > 0 {
+            print!("{}{} failed{}  ", self.esc("\x1b[0;31m"), self.fail, self.esc("\x1b[0m"));
+        }
+        if self.warn > 0 {
+            print!("{}{} warnings{}  ", self.esc("\x1b[0;33m"), self.warn, self.esc("\x1b[0m"));
+        }
+        if self.pass > 0 {
+            print!("{}{} passed{}", self.esc("\x1b[0;32m"), self.pass, self.esc("\x1b[0m"));
+        }
+        println!();
+    }
+    fn exit_code(&self) -> i32 {
+        if self.fail > 0 { 2 } else if self.warn > 0 { 1 } else { 0 }
+    }
+}
+
+fn dr_find_in_path(name: &str) -> Option<String> {
+    let path_var = env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        if dir.is_empty() { continue; }
+        let candidate = Path::new(dir).join(name);
+        if candidate.is_file() {
+            return Some(candidate.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+fn dr_find_config(override_path: Option<&str>) -> Option<std::path::PathBuf> {
+    if let Some(p) = override_path {
+        let path = Path::new(p);
+        if path.exists() { return Some(path.to_path_buf()); }
+        eprintln!("doctor: config not found: {}", p);
+        return None;
+    }
+    let home = env::var("HOME").unwrap_or_default();
+    let xdg = env::var("XDG_CONFIG_HOME")
+        .unwrap_or_else(|_| format!("{}/.config", home));
+
+    let mut candidates: Vec<String> = Vec::new();
+    if env::var("SWAYSOCK").is_ok() {
+        candidates.push(format!("{}/sway/config", xdg));
+    }
+    if env::var("I3SOCK").is_ok() {
+        candidates.push(format!("{}/i3/config", xdg));
+    }
+    candidates.push(format!("{}/sway/config", xdg));
+    candidates.push(format!("{}/i3/config", xdg));
+    if !home.is_empty() {
+        candidates.push(format!("{}/.sway/config", home));
+        candidates.push(format!("{}/.i3/config", home));
+    }
+    for c in candidates {
+        let p = Path::new(&c);
+        if p.exists() { return Some(p.to_path_buf()); }
+    }
+    None
+}
+
+fn dr_read_glob(pattern: &str, out: &mut Vec<String>) {
+    if let Some(star) = pattern.find('*') {
+        let prefix = &pattern[..star];
+        let dir_part = Path::new(prefix).parent().unwrap_or(Path::new(".")).to_path_buf();
+        let suffix = pattern[star + 1..].trim_start_matches('/');
+        if let Ok(entries) = std::fs::read_dir(&dir_part) {
+            let mut paths: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    let n = e.file_name();
+                    let s = n.to_string_lossy();
+                    !s.starts_with('.') && (suffix.is_empty() || s.ends_with(suffix))
+                })
+                .map(|e| e.path())
+                .collect();
+            paths.sort();
+            for p in paths {
+                if let Ok(c) = std::fs::read_to_string(&p) {
+                    out.extend(c.lines().map(String::from));
+                }
+            }
+        }
+    } else if let Ok(c) = std::fs::read_to_string(pattern) {
+        out.extend(c.lines().map(String::from));
+    }
+}
+
+fn dr_gather_lines(config: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let dir = config.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let home = env::var("HOME").unwrap_or_default();
+    let content = match std::fs::read_to_string(config) {
+        Ok(c) => c,
+        Err(_) => return out,
+    };
+    for line in content.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("include ") {
+            let pattern = rest.trim().trim_matches('"');
+            let resolved = if pattern.starts_with("~/") {
+                format!("{}{}", home, &pattern[1..])
+            } else if pattern.starts_with('/') {
+                pattern.to_string()
+            } else {
+                format!("{}/{}", dir.display(), pattern)
+            };
+            dr_read_glob(&resolved, &mut out);
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    out
+}
+
+fn dr_collect_aliases(lines: &[String]) -> Vec<String> {
+    let mut aliases = Vec::new();
+    for line in lines {
+        let t = line.trim();
+        if !t.starts_with("set ") { continue; }
+        let tokens: Vec<&str> = t.split_whitespace().collect();
+        if tokens.len() < 3 { continue; }
+        let varname = tokens[1];
+        if !varname.starts_with('$') { continue; }
+        let var_pos = t.find(varname).unwrap_or(0);
+        let after_var = t[var_pos + varname.len()..].trim();
+        if after_var == "exec swi3-groups"
+            || after_var == "exec --no-startup-id swi3-groups"
+            || after_var.starts_with("exec swi3-groups ")
+            || after_var.starts_with("exec --no-startup-id swi3-groups ")
+        {
+            aliases.push(varname.to_string());
+        }
+    }
+    aliases
+}
+
+fn dr_extract_cmd(line: &str, aliases: &[String]) -> Option<String> {
+    let t = line.trim();
+    if t.starts_with('#') || t.is_empty() || t.starts_with("set ") {
+        return None;
+    }
+    for sep in ["exec --no-startup-id swi3-groups ", "exec swi3-groups "] {
+        if let Some(pos) = t.find(sep) {
+            let before = &t[..pos];
+            if !before.ends_with(|c: char| c.is_alphanumeric() || c == '_') {
+                let after = t[pos + sep.len()..].trim_start();
+                if let Some(cmd) = after.split_whitespace().next() {
+                    if !cmd.starts_with('-') {
+                        return Some(cmd.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for alias in aliases {
+        if let Some(pos) = t.find(alias.as_str()) {
+            let before = &t[..pos];
+            if before.is_empty() || before.ends_with(|c: char| c.is_whitespace()) {
+                let after = t[pos + alias.len()..].trim_start();
+                if let Some(cmd) = after.split_whitespace().next() {
+                    if !cmd.starts_with('-') && !cmd.starts_with('$') {
+                        return Some(cmd.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn cmd_doctor(config_path: Option<&str>) -> i32 {
+    let mut d = Dr::new();
+    println!("{}swi3-groups doctor{}", d.esc("\x1b[1m"), d.esc("\x1b[0m"));
+
+    // ── 1. Binaries ───────────────────────────────────────────────────────────
+    d.section("1. Binaries");
+
+    match dr_find_in_path("swi3-groups") {
+        Some(p) => d.ok(&format!("swi3-groups found: {}", p)),
+        None => {
+            d.fail("swi3-groups not found in PATH");
+            d.info("Run 'make install' to install it.");
+        }
+    }
+
+    // ── 2. Config file ────────────────────────────────────────────────────────
+    d.section("2. Config file");
+
+    let cfg_path = match dr_find_config(config_path) {
+        Some(p) => {
+            d.ok(&format!("Config: {}", p.display()));
+            p
+        }
+        None => {
+            d.fail("No sway/i3 config file found");
+            d.info("Searched $XDG_CONFIG_HOME/sway|i3/config and ~/.sway|i3/config");
+            d.summary();
+            return d.exit_code();
+        }
+    };
+
+    let lines = dr_gather_lines(&cfg_path);
+    let aliases = dr_collect_aliases(&lines);
+
+    // ── 3. Command usage ──────────────────────────────────────────────────────
+    d.section("3. Command usage");
+
+    let mut seen_bad: HashSet<String> = HashSet::new();
+    let mut any_bad = false;
+
+    for line in &lines {
+        let Some(cmd) = dr_extract_cmd(line, &aliases) else { continue };
+
+        if let Some(&(_, suggestion)) =
+            RENAMED_CMDS.iter().find(|(old, _)| *old == cmd.as_str())
+        {
+            if seen_bad.insert(cmd.clone()) {
+                d.fail(&format!("Invalid command '{}'", cmd));
+                d.info(&format!("→ Replace with: {}", suggestion));
+                d.info(&format!("  Context: {}", line.trim()));
+                any_bad = true;
+            }
+            continue;
+        }
+
+        if !VALID_CMDS.contains(&cmd.as_str()) && seen_bad.insert(cmd.clone()) {
+            d.fail(&format!("Unknown command '{}'", cmd));
+            d.info(&format!("  Context: {}", line.trim()));
+            any_bad = true;
+        }
+    }
+    if !any_bad {
+        d.ok("All swi3-groups commands are valid");
+    }
+
+    // ── 4. Deprecated binary names ────────────────────────────────────────────
+    d.section("4. Deprecated binary names");
+
+    let mut old_count = 0;
+    for old in OLD_BINS {
+        let found = lines
+            .iter()
+            .any(|l| !l.trim().starts_with('#') && l.contains(old));
+        if found {
+            d.fail(&format!("Old binary '{}' still referenced in config", old));
+            d.info("→ Replace with 'swi3-groups'");
+            old_count += 1;
+        }
+    }
+    if old_count == 0 {
+        d.ok("No deprecated binary names found");
+    }
+
+    // ── 5. init-session ───────────────────────────────────────────────────────
+    d.section("5. Session init");
+
+    let has_init = lines
+        .iter()
+        .any(|l| dr_extract_cmd(l, &aliases).as_deref() == Some("init-session"));
+    if has_init {
+        d.ok("init-session is exec'd on startup");
+    } else {
+        d.warn("init-session not found in config");
+        d.info("Add to your config for proper workspace numbering on first login:");
+        d.info("  exec swi3-groups init-session");
+    }
+
+    // ── 6. Raw workspace navigation ───────────────────────────────────────────
+    d.section("6. Workspace navigation");
+
+    let mut raw_count = 0;
+    for line in &lines {
+        let t = line.trim();
+        if t.starts_with('#') { continue; }
+        if t.contains("bindsym")
+            && !t.contains("swi3-groups")
+            && (t.contains("workspace next") || t.contains("workspace prev"))
+            && !t.contains("next_on_output")
+            && !t.contains("prev_on_output")
+        {
+            d.warn("Raw 'workspace next/prev' binding bypasses group navigation");
+            d.info("  Consider: swi3-groups next / swi3-groups prev");
+            d.info(&format!("  Context: {}", t));
+            raw_count += 1;
+        }
+    }
+    if raw_count == 0 {
+        d.ok("No raw workspace next/prev bindings found");
+    }
+
+    // ── 7. Bar integration ────────────────────────────────────────────────────
+    d.section("7. Bar integration");
+
+    let uses_swaybar = lines
+        .iter()
+        .any(|l| matches!(l.trim(), "bar {" | "bar{"));
+    let uses_waybar = lines.iter().any(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.contains("exec") && t.contains("waybar")
+    });
+
+    let mut bar_checked = false;
+
+    if uses_swaybar {
+        bar_checked = true;
+        let has_strip = lines.iter().any(|l| {
+            let t = l.trim();
+            !t.starts_with('#') && t.contains("strip_workspace_numbers") && t.contains("yes")
+        });
+        if has_strip {
+            d.ok("swaybar: strip_workspace_numbers yes");
+        } else {
+            d.warn("swaybar: 'strip_workspace_numbers yes' not set in bar { } block");
+            d.info("Add it to avoid showing raw encoded workspace names.");
+        }
+    }
+
+    if uses_waybar {
+        bar_checked = true;
+        let has_updater = lines.iter().any(|l| {
+            let t = l.trim();
+            !t.starts_with('#')
+                && t.contains("exec")
+                && t.contains("bar-updater")
+                && (t.contains("swi3-groups") || t.contains("i3-sets-bar-module-updater"))
+        });
+        if has_updater {
+            d.ok("waybar: bar-updater exec'd");
+        } else {
+            d.warn("waybar detected but 'swi3-groups bar-updater' not found in config");
+            d.info("Add: exec swi3-groups bar-updater");
+        }
+    }
+
+    if !bar_checked {
+        d.info("No swaybar or waybar config detected");
+    }
+
+    // ── 8. Menu backend ───────────────────────────────────────────────────────
+    d.section("8. Menu backend");
+
+    if let Ok(custom) = env::var("SWI3SETS_MENU") {
+        if !custom.trim().is_empty() {
+            d.ok(&format!("Menu overridden via $SWI3SETS_MENU: {}", custom.trim()));
+        }
+    } else {
+        let found = ["rofi", "wofi", "fuzzel", "dmenu"]
+            .iter()
+            .find(|&&m| dr_find_in_path(m).is_some())
+            .copied();
+        match found {
+            Some(m) => d.ok(&format!("Menu backend available: {}", m)),
+            None => {
+                d.warn("No menu backend found (rofi, wofi, fuzzel, dmenu)");
+                d.info(
+                    "Interactive commands (switch-group, assign, focus, move, rename) will not work.",
+                );
+                d.info("Install one, or set $SWI3SETS_MENU to a custom launcher.");
+            }
+        }
+    }
+
+    d.summary();
+    d.exit_code()
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -1786,6 +2242,14 @@ fn main() {
                         process::exit(1);
                     });
                 process::exit(status.code().unwrap_or(1));
+            }
+            "doctor" => {
+                let config = args
+                    .iter()
+                    .position(|a| a == "--config" || a == "-c")
+                    .and_then(|i| args.get(i + 1))
+                    .map(|s| s.as_str());
+                process::exit(cmd_doctor(config));
             }
             _ => {}
         }
