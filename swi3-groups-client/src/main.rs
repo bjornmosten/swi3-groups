@@ -950,6 +950,25 @@ fn run_bar_updater(signal: u32) {
 
 // ── menu helpers (rofi/wofi/fuzzel/dmenu) ───────────────────────────────────
 
+/// True if any process on the system has exactly this `comm` (argv[0] basename
+/// truncated to 15 chars by the kernel). Reads /proc directly — no fork.
+fn process_running(name: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
+    for entry in entries.flatten() {
+        let fname = entry.file_name();
+        let s = fname.to_string_lossy();
+        if !s.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
+            if comm.trim_end() == name {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn command_exists(cmd: &str) -> bool {
     if cmd.contains('/') {
         return Path::new(cmd).is_file();
@@ -1049,15 +1068,16 @@ fn build_menu(
 
 fn run_menu(menu: &MenuCmd, input: &str) -> Result<Option<String>, String> {
     // rofi uses an exclusive pidfile and refuses to start while another
-    // instance is alive ("Failed to set lock on pidfile: Rofi already running?").
-    // Kill any existing rofi so the new menu always wins.
+    // instance is alive. Only pay the kill+settle cost when one is actually
+    // running; the /proc scan is sub-millisecond and avoids forking pkill
+    // on every keypress.
     let basename = Path::new(&menu.cmd)
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(menu.cmd.as_str());
-    if basename == "rofi" {
+    if basename == "rofi" && process_running("rofi") {
         let _ = Command::new("pkill").args(["-x", "rofi"]).status();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(30));
     }
 
     let mut child = Command::new(&menu.cmd)
@@ -1138,21 +1158,18 @@ fn list_sets(conn: &mut Connection, focused_monitor_only: bool) -> Fallible<Vec<
 
 fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, String> {
     let workspaces = get_all_workspaces(conn).map_err(|e| e.to_string())?;
+    let focused_out = workspaces
+        .iter()
+        .find(|ws| ws.focused)
+        .map(|ws| ws.output.clone());
     let groups = set_to_workspaces_ordered(&workspaces);
     let mut input = String::new();
-    
-    // Check if default group is present
-    let mut has_default = false;
-    for (s, _) in &groups {
-        if s.is_empty() {
-            has_default = true;
-        }
-    }
+
+    let has_default = groups.iter().any(|(s, _)| s.is_empty());
     if !has_default {
         input.push_str(DEFAULT_SET_ITEM);
         input.push('\n');
     }
-    
     for (s, _) in groups {
         if s.is_empty() {
             input.push_str(DEFAULT_SET_ITEM);
@@ -1161,8 +1178,7 @@ fn cmd_select_set(conn: &mut Connection, mesg: &str) -> Result<Option<String>, S
         }
         input.push('\n');
     }
-    
-    let focused_out = focused_output_for_menu(conn);
+
     let menu = build_menu(
         "Workspace Group",
         mesg,
