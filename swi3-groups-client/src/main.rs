@@ -950,23 +950,14 @@ fn run_bar_updater(signal: u32) {
 
 // ── menu helpers (rofi/wofi/fuzzel/dmenu) ───────────────────────────────────
 
-/// True if any process on the system has exactly this `comm` (argv[0] basename
-/// truncated to 15 chars by the kernel). Reads /proc directly — no fork.
-fn process_running(name: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else { return false };
-    for entry in entries.flatten() {
-        let fname = entry.file_name();
-        let s = fname.to_string_lossy();
-        if !s.bytes().all(|b| b.is_ascii_digit()) {
-            continue;
-        }
-        if let Ok(comm) = std::fs::read_to_string(entry.path().join("comm")) {
-            if comm.trim_end() == name {
-                return true;
-            }
-        }
-    }
-    false
+/// True if rofi's pidfile points at a live process. Two filesystem ops total
+/// — avoids scanning /proc on every menu launch.
+fn rofi_lock_held() -> bool {
+    let Ok(runtime) = env::var("XDG_RUNTIME_DIR") else { return false };
+    let pidfile = Path::new(&runtime).join("rofi.pid");
+    let Ok(content) = std::fs::read_to_string(&pidfile) else { return false };
+    let Ok(pid) = content.trim().parse::<u32>() else { return false };
+    Path::new("/proc").join(pid.to_string()).join("comm").exists()
 }
 
 fn command_exists(cmd: &str) -> bool {
@@ -1075,7 +1066,7 @@ fn run_menu(menu: &MenuCmd, input: &str) -> Result<Option<String>, String> {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or(menu.cmd.as_str());
-    if basename == "rofi" && process_running("rofi") {
+    if basename == "rofi" && rofi_lock_held() {
         let _ = Command::new("pkill").args(["-x", "rofi"]).status();
         std::thread::sleep(std::time::Duration::from_millis(30));
     }
