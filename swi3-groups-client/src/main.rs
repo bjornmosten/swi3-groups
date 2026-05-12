@@ -581,6 +581,7 @@ fn cmd_workspace_relative(conn: &mut Connection, offset: i64) -> Fallible<String
 
 fn cmd_workspace_global_relative(conn: &mut Connection, offset: i64) -> Fallible<String> {
     let focused = get_focused_workspace(conn)?;
+    let focused_set = parse_name(&focused.name).set.unwrap_or_default();
     let focused_output = focused.output.clone();
     let all = get_all_workspaces(conn)?;
     let mut groups = set_to_workspaces_ordered(&all);
@@ -598,8 +599,18 @@ fn cmd_workspace_global_relative(conn: &mut Connection, offset: i64) -> Fallible
         .position(|(_, ws)| ws.name == focused.name)
         .unwrap_or(0);
     let next = ((current as i64 + offset).rem_euclid(flat.len() as i64)) as usize;
-    let (_target_group, target_ws) = &flat[next];
-    focus_workspace(conn, &target_ws.name, false)?;
+    let (target_group, target_ws) = &flat[next];
+    let target_group = target_group.clone();
+    let target_ln = get_local_number(&parse_name(&target_ws.name)).unwrap_or(1);
+    let target_name = target_ws.name.clone();
+
+    if target_group != focused_set {
+        cmd_switch_active_group(conn, &target_group, false)?;
+        let (name, _) = get_workspace_by_local_number(conn, &target_group, target_ln)?;
+        focus_workspace(conn, &name, false)?;
+    } else {
+        focus_workspace(conn, &target_name, false)?;
+    }
     Ok(String::new())
 }
 
@@ -794,7 +805,17 @@ fn cmd_rename_workspace(
 }
 
 fn cmd_assign_workspace_to_group(conn: &mut Connection, group: &str) -> Fallible<String> {
-    cmd_rename_workspace(conn, None, None, Some(group))
+    let existed = {
+        let all = get_all_workspaces(conn)?;
+        set_to_workspaces_ordered(&all)
+            .iter()
+            .any(|(s, _)| s == group)
+    };
+    cmd_rename_workspace(conn, None, None, Some(group))?;
+    if !existed {
+        cmd_switch_active_group(conn, group, false)?;
+    }
+    Ok(String::new())
 }
 
 /// Initialize a fresh i3/sway session: place one workspace per monitor in
