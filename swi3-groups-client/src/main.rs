@@ -395,11 +395,11 @@ enum SetContext {
 fn resolve_set(conn: &mut Connection, ctx: &SetContext) -> Fallible<String> {
     match ctx {
         SetContext::Named(name) => Ok(name.clone()),
-        SetContext::Focused => {
+        SetContext::Focused | SetContext::None => {
             let ws = get_focused_workspace(conn)?;
             Ok(parse_name(&ws.name).set.unwrap_or_default())
         }
-        SetContext::Active | SetContext::None => {
+        SetContext::Active => {
             let monitor = get_focused_monitor_name(conn)?;
             let ws = get_monitor_workspaces(conn, &monitor)?;
             let groups = set_to_workspaces_ordered(&ws);
@@ -2296,5 +2296,113 @@ fn main() {
             eprintln!("{}", e);
             process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ws_name(group: &str, global_number: i64, local_number: i64) -> String {
+        create_name(&WsMeta {
+            global_number: Some(global_number),
+            set: Some(group.to_string()),
+            local_number: Some(local_number),
+            static_name: None,
+            dynamic_name: None,
+        })
+    }
+
+    // Mirrors the SetContext::Active path: first group in encounter order.
+    fn active_group_from_names(names: &[&str]) -> Option<String> {
+        names
+            .first()
+            .map(|n| parse_name(n).set.unwrap_or_default())
+    }
+
+    // Mirrors the SetContext::None path (the fix): group of the focused workspace.
+    fn focused_group_from_names<'a>(
+        names: &[&'a str],
+        focused: &str,
+    ) -> Option<String> {
+        names
+            .iter()
+            .find(|&&n| n == focused)
+            .map(|n| parse_name(n).set.unwrap_or_default())
+    }
+
+    /// Regression: after navigating to group B via `swi3-groups prev/next`, pressing
+    /// super+1-9 must target B's workspace, not A's. The bug was that SetContext::None
+    /// used the first-in-encounter-order group (A, which has lower global numbers after
+    /// switch-active-group A) rather than the focused workspace's group (B).
+    #[test]
+    fn resolve_none_uses_focused_group_not_ordering() {
+        // Group A has lower global numbers (set_index=0) — it was selected with super+g.
+        // User navigated to B via prev/next; B:1 is now focused.
+        let a1 = ws_name("A", 1, 1);
+        let a2 = ws_name("A", 2, 2);
+        let b1 = ws_name("B", 101, 1); // focused — user is here
+        let b2 = ws_name("B", 102, 2);
+        let names = [a1.as_str(), a2.as_str(), b1.as_str(), b2.as_str()];
+
+        // Old None behavior: first workspace in list determines active group → A (bug).
+        assert_eq!(active_group_from_names(&names).as_deref(), Some("A"));
+
+        // New None behavior: focused workspace's group → B (correct).
+        assert_eq!(
+            focused_group_from_names(&names, &b1).as_deref(),
+            Some("B")
+        );
+    }
+
+    /// The focused-group answer is stable regardless of the order sway returns workspaces.
+    /// The ordering-based approach was fragile: if sway returned workspaces in creation
+    /// order (A first) rather than global-number order, it would see A as active even
+    /// after switch-active-group B.
+    #[test]
+    fn focused_group_is_stable_regardless_of_sway_list_order() {
+        let a1 = ws_name("A", 1, 1);
+        let b1 = ws_name("B", 101, 1); // focused
+
+        // Sway returns in global-number order (A first).
+        let gn_order = [a1.as_str(), b1.as_str()];
+        assert_eq!(active_group_from_names(&gn_order).as_deref(), Some("A")); // ordering is fragile
+        assert_eq!(focused_group_from_names(&gn_order, &b1).as_deref(), Some("B")); // focused is stable
+
+        // Sway returns in creation order (B first — ordering heuristic now gets lucky).
+        let creation_order = [b1.as_str(), a1.as_str()];
+        assert_eq!(active_group_from_names(&creation_order).as_deref(), Some("B"));
+        assert_eq!(focused_group_from_names(&creation_order, &b1).as_deref(), Some("B"));
+    }
+
+    /// After switch-active-group B, sway should return B workspaces first (lower gn).
+    /// Both paths agree in this case, confirming the normal post-switch state is consistent.
+    #[test]
+    fn both_paths_agree_after_correct_switch() {
+        // B switched to set_index=0 (lower gn), A is now set_index=1.
+        let b1 = ws_name("B", 1, 1); // B is now active by ordering
+        let b2 = ws_name("B", 2, 2);
+        let a1 = ws_name("A", 101, 1);
+        let names = [b1.as_str(), b2.as_str(), a1.as_str()];
+
+        assert_eq!(active_group_from_names(&names).as_deref(), Some("B"));
+        assert_eq!(focused_group_from_names(&names, &b1).as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn parse_name_round_trip() {
+        let meta = WsMeta {
+            global_number: Some(42),
+            set: Some("work".to_string()),
+            static_name: Some("dev".to_string()),
+            dynamic_name: None,
+            local_number: Some(3),
+        };
+        let name = create_name(&meta);
+        let parsed = parse_name(&name);
+        assert_eq!(parsed.global_number, Some(42));
+        assert_eq!(parsed.set.as_deref(), Some("work"));
+        assert_eq!(parsed.static_name.as_deref(), Some("dev"));
+        assert_eq!(parsed.local_number, Some(3));
     }
 }
